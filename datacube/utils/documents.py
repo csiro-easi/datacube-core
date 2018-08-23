@@ -10,7 +10,6 @@ from itertools import chain
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
-import sys
 
 import jsonschema
 import netCDF4
@@ -43,6 +42,11 @@ def _open_from_s3(url):
 
 
 def _open_with_urllib(url):
+    resource = urlopen(url)
+    # resource.read().decode(resource.headers.get_content_charset())
+    import codecs
+    encoding = resource.headers.get_content_charset() or 'utf-8'
+    codecs.getreader()
     return urlopen(url)
 
 
@@ -53,12 +57,6 @@ _PROTOCOL_OPENERS = {
     'https': _open_with_urllib,
     'file': _open_with_urllib
 }
-
-# The JSON parser in Python 3.5 doesn't handle bytes, only str.
-# I can't work out how to get the boto3 code to do that, so for now
-# reading documents from s3 requires Python 3.6+.
-if sys.version_info >= (3, 6):
-    _PROTOCOL_OPENERS['s3'] = _open_from_s3
 
 
 def load_from_yaml(handle):
