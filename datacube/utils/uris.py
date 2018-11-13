@@ -1,3 +1,4 @@
+import os
 import pathlib
 import re
 from copy import deepcopy
@@ -88,6 +89,38 @@ def as_url(maybe_uri):
         return pathlib.Path(maybe_uri).absolute().as_uri()
 
 
+def default_base_dir():
+    """Return absolute path to current directory. If PWD environment variable is
+       set correctly return that, note that PWD might be set to "symlinked"
+       path instead of "real" path.
+
+       Only return PWD instead of cwd when:
+
+       1. PWD exists (i.e. launched from interactive shell)
+       2. Contains Absolute path (sanity check)
+       3. Absolute ath in PWD resolves to the same directory as cwd (process didn't call chdir after starting)
+    """
+    cwd = pathlib.Path('.').resolve()
+
+    pwd = os.environ.get('PWD')
+    if pwd is None:
+        return cwd
+
+    pwd = pathlib.Path(pwd)
+    if not pwd.is_absolute():
+        return cwd
+
+    try:
+        pwd_resolved = pwd.resolve()
+    except IOError:
+        return cwd
+
+    if cwd != pwd_resolved:
+        return cwd
+
+    return pwd
+
+
 def without_lineage_sources(doc, spec, inplace=False):
     """ Replace lineage.source_datasets with {}
 
@@ -105,3 +138,34 @@ def without_lineage_sources(doc, spec, inplace=False):
         doc_view.sources = {}
 
     return doc
+
+
+def normalise_path(p, base=None):
+    """Turn path into absolute path resolving any `../` and `.`
+
+       If path is relative pre-pend `base` path to it, `base` if set should be
+       an absolute path. If not set, current working directory (as seen by the
+       user launching the process, including any possible symlinks) will be
+       used.
+    """
+    assert isinstance(p, (str, pathlib.Path))
+    assert isinstance(base, (str, pathlib.Path, type(None)))
+
+    def norm(p):
+        return pathlib.Path(os.path.normpath(str(p)))
+
+    if isinstance(p, str):
+        p = pathlib.Path(p)
+
+    if isinstance(base, str):
+        base = pathlib.Path(base)
+
+    if p.is_absolute():
+        return norm(p)
+
+    if base is None:
+        base = default_base_dir()
+    elif not base.is_absolute():
+        raise ValueError("Expect base to be an absolute path")
+
+    return norm(base / p)

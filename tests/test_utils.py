@@ -31,7 +31,7 @@ from datacube.utils.generic import map_with_lookahead
 from datacube.utils.math import clamp
 from datacube.utils.py import sorted_items
 from datacube.utils.uris import uri_to_local_path, mk_part_uri, get_part_from_uri, as_url, is_url, \
-    without_lineage_sources
+    without_lineage_sources, normalise_path, default_base_dir
 
 
 def test_stats_dates():
@@ -582,8 +582,6 @@ def test_dedup():
 
 
 def test_default_base_dir():
-    Path = pathlib.Path
-
     def set_pwd(p):
         os.environ['PWD'] = str(p)
 
@@ -624,8 +622,6 @@ def test_default_base_dir():
 
 
 def test_normalise_path():
-    Path = pathlib.Path
-
     cwd = Path('.').resolve()
     assert normalise_path('.').resolve() == cwd
 

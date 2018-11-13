@@ -42,11 +42,11 @@ def _open_from_s3(url):
 
 
 def _open_with_urllib(url):
-    resource = urlopen(url)
-    # resource.read().decode(resource.headers.get_content_charset())
-    import codecs
-    encoding = resource.headers.get_content_charset() or 'utf-8'
-    codecs.getreader()
+#    resource = urlopen(url)
+#    # resource.read().decode(resource.headers.get_content_charset())
+#    import codecs
+#    encoding = resource.headers.get_content_charset() or 'utf-8'
+#    codecs.getreader()
     return urlopen(url)
 
 
