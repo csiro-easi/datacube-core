@@ -179,4 +179,6 @@ class ExecutionEngineV2(Worker):
         self._file_transfer.delete([self._params_url])
 
         self.job_finishes(job, JobStatuses.COMPLETED)
-        self.logger.info('Completed execution of subjob %d', job['id'])
+        status_msg = 'Completed execution of subjob {}'.format(job['id'])
+        self.logger.info(status_msg)
+        return status_msg

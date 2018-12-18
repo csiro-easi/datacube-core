@@ -51,7 +51,7 @@ class AnalyticsWorker():
         execution_engine = ExecutionEngineV2('Execution Engine', url)
         if not execution_engine:
             raise RuntimeError('Execution engine must be initialised by calling `initialise_engines`')
-        execution_engine.execute()
+        return execution_engine.execute()
 
     def monitor_jobs(self, monitor_url, kill_subjobs=None):
         '''Monitors the subjobs.
