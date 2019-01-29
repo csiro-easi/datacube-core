@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-
 import time
 import logging
 import click
@@ -10,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from pandas import to_datetime
 from datetime import datetime
+from typing import Tuple
 
 import datacube
 from datacube.api.core import Datacube
@@ -17,7 +16,8 @@ from datacube.index.index import Index
 from datacube.model import DatasetType, Range, GeoPolygon, Measurement
 from datacube.model.utils import make_dataset, xr_apply, datasets_to_doc
 from datacube.ui import click as ui
-from datacube.utils import read_documents, normalise_path
+from datacube.utils import read_documents
+from datacube.utils.uris import normalise_path
 from datacube.ui.task_app import check_existing_files, load_tasks as load_tasks_, save_tasks as save_tasks_
 from datacube.drivers import storage_writer_by_name
 
@@ -127,8 +127,10 @@ def get_resampling(config):
     return {spec['src_varname']: spec.get('resampling_method') for spec in config['measurements']}
 
 
-def ensure_output_type(index, config, storage_format, allow_product_changes=False):
-    # type: (Index, dict, bool) -> (DatasetType, DatasetType)
+def ensure_output_type(index: Index,
+                       config: dict,
+                       storage_format: str,
+                       allow_product_changes: bool = False) -> Tuple[DatasetType, DatasetType]:
     """
     Create the output product for the given ingest config if it doesn't already exist.
 

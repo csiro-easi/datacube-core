@@ -4,7 +4,6 @@ Finds single timeslice files that have not been stacked (based on filename), and
 This tool is used to update NetCDF metadata for files that are not picked up by the stacker
 
 """
-from __future__ import absolute_import, print_function, division
 
 import copy
 import datetime
@@ -15,6 +14,7 @@ import re
 import socket
 from functools import partial
 from collections import Counter
+from typing import List
 
 import click
 import dask.array as da
@@ -27,10 +27,8 @@ import xarray as xr
 import datacube
 from datacube.model import Dataset
 from datacube.model.utils import xr_apply, datasets_to_doc
-from datacube.storage import netcdf_writer
-from datacube.storage.storage import create_netcdf_storage_unit
+from datacube.drivers.netcdf import create_netcdf_storage_unit, netcdf_writer
 from datacube.ui import task_app
-from datacube.ui.click import to_pathlib
 
 _LOG = logging.getLogger(__name__)
 
@@ -226,8 +224,7 @@ def check_identical(data1, data2, output_filename):
 
 
 def make_updated_tile(old_datasets, new_uri, geobox):
-    def update_dataset_location(labels, dataset):
-        # type: (object, Dataset) -> list
+    def update_dataset_location(labels, dataset: Dataset) -> List[Dataset]:
         new_dataset = copy.copy(dataset)
         new_dataset.uris = [new_uri]
         return [new_dataset]

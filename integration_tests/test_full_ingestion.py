@@ -1,8 +1,5 @@
-from __future__ import absolute_import
-
 import hashlib
 import warnings
-from pathlib import Path
 from uuid import UUID
 
 import netCDF4
@@ -14,26 +11,9 @@ from affine import Affine
 from datacube.api.query import query_group_by
 from datacube.utils import geometry, read_documents, netcdf_extract_string
 from integration_tests.utils import prepare_test_ingestion_configuration, GEOTIFF
-
-PROJECT_ROOT = Path(__file__).parents[1]
-CONFIG_SAMPLES = PROJECT_ROOT / 'docs/config_samples/'
-LS5_SAMPLES = CONFIG_SAMPLES / 'ga_landsat_5/'
-LS5_MATCH_RULES = CONFIG_SAMPLES / 'match_rules' / 'ls5_scenes.yaml'
-LS5_NBAR_STORAGE_TYPE = LS5_SAMPLES / 'ls5_geographic.yaml'
-LS5_NBAR_ALBERS_STORAGE_TYPE = LS5_SAMPLES / 'ls5_albers.yaml'
-
-INGESTER_CONFIGS = CONFIG_SAMPLES / 'ingester'
-
-TEST_STORAGE_SHRINK_FACTOR = 100
-TEST_STORAGE_NUM_MEASUREMENTS = 2
-GEOGRAPHIC_VARS = ('latitude', 'longitude')
-PROJECTED_VARS = ('x', 'y')
+from integration_tests.test_end_to_end import INGESTER_CONFIGS
 
 EXPECTED_STORAGE_UNIT_DATA_SHAPE = (1, 40, 40)
-EXPECTED_NUMBER_OF_STORAGE_UNITS = 12
-
-JSON_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
-
 COMPLIANCE_CHECKER_NORMAL_LIMIT = 2
 
 
@@ -282,22 +262,32 @@ def check_data_with_api(index, time_slices):
     from datacube import Datacube
     dc = Datacube(index=index)
 
-    # Make the retrieved data 100 less granular
-    shape_x = int(GEOTIFF['shape']['x'] / 100.0)
-    shape_y = int(GEOTIFF['shape']['y'] / 100.0)
-    pixel_x = int(GEOTIFF['pixel_size']['x'] * 100)
-    pixel_y = int(GEOTIFF['pixel_size']['y'] * 100)
+    # TODO: this test needs to change, it tests that results are exactly the
+    #       same as some time before, but with the current zoom out factor it's
+    #       hard to verify that results are as expected even with human
+    #       judgement. What it should test is that reading native from the
+    #       ingested product gives exactly the same results as reading into the
+    #       same GeoBox from the original product. Separate to that there
+    #       should be a read test that confirms that what you read from native
+    #       product while changing projection is of expected value
+
+    # Make the retrieved data lower res
+    ss = 100
+    shape_x = int(GEOTIFF['shape']['x'] / ss)
+    shape_y = int(GEOTIFF['shape']['y'] / ss)
+    pixel_x = int(GEOTIFF['pixel_size']['x'] * ss)
+    pixel_y = int(GEOTIFF['pixel_size']['y'] * ss)
 
     input_type_name = 'ls5_nbar_albers'
     input_type = dc.index.products.get_by_name(input_type_name)
-    geobox = geometry.GeoBox(shape_x + 1, shape_y + 1,
+    geobox = geometry.GeoBox(shape_x + 2, shape_y + 2,
                              Affine(pixel_x, 0.0, GEOTIFF['ul']['x'], 0.0, pixel_y, GEOTIFF['ul']['y']),
                              geometry.CRS(GEOTIFF['crs']))
     observations = dc.find_datasets(product='ls5_nbar_albers', geopolygon=geobox.extent)
     group_by = query_group_by('time')
     sources = dc.group_datasets(observations, group_by)
     data = dc.load_data(sources, geobox, input_type.measurements.values())
-    assert hashlib.md5(data.green.data).hexdigest() == '7f5ace486e88d33edf3512e8de6b6996'
-    assert hashlib.md5(data.blue.data).hexdigest() == 'b58204f1e10dd678b292df188c242c7e'
+    assert hashlib.md5(data.green.data).hexdigest() == '0f64647bad54db4389fb065b2128025e'
+    assert hashlib.md5(data.blue.data).hexdigest() == '41a7b50dfe5c4c1a1befbc378225beeb'
     for time_slice in range(time_slices):
         assert data.blue.values[time_slice][-1, -1] == -999

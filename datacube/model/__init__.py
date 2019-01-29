@@ -2,30 +2,30 @@
 """
 Core classes used across modules.
 """
-from __future__ import absolute_import, division
-
 import logging
 import math
 import warnings
-from collections import namedtuple, OrderedDict, Sequence
+from collections import OrderedDict, Sequence
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+import yaml
 from affine import Affine
+from typing import Optional, List, Mapping, Any, Dict
 
-from datacube.compat import urlparse
-from datacube.utils import geometry, without_lineage_sources
-from datacube.utils import parse_time, cached_property, uri_to_local_path, intersects, schema_validated, DocReader
+from urllib.parse import urlparse
+from datacube.utils import geometry, without_lineage_sources, parse_time, cached_property, uri_to_local_path, \
+    schema_validated, DocReader
 from datacube.utils.geometry import (CRS as _CRS,
                                      GeoBox as _GeoBox,
                                      Coordinate as _Coordinate,
-                                     BoundingBox as _BoundingBox)
+                                     BoundingBox as _BoundingBox, intersects)
+from datacube.utils.serialise import SafeDatacubeDumper
+from .fields import Field
+from ._base import Range
 
 _LOG = logging.getLogger(__name__)
-
-Range = namedtuple('Range', ('begin', 'end'))
-Variable = namedtuple('Variable', ('dtype', 'nodata', 'dims', 'units'))
-CellIndex = namedtuple('CellIndex', ('x', 'y'))
 
 NETCDF_VAR_OPTIONS = {'zlib', 'complevel', 'shuffle', 'fletcher32', 'contiguous'}
 VALID_VARIABLE_ATTRS = {'standard_name', 'long_name', 'units', 'flags_definition'}
@@ -77,16 +77,21 @@ class Dataset(object):
     :param list[str] uris: All active uris for the dataset
     """
 
-    def __init__(self, type_, metadata_doc, local_uri=None, uris=None, sources=None,
-                 indexed_by=None, indexed_time=None, archived_time=None):
+    def __init__(self,
+                 type_: 'DatasetType',
+                 metadata_doc: dict,
+                 local_uri: Optional[str] = None,
+                 uris: Optional[List[str]] = None,
+                 sources: Optional[Mapping[str, 'Dataset']] = None,
+                 indexed_by: Optional[str] = None,
+                 indexed_time: Optional[datetime] = None,
+                 archived_time: Optional[datetime] = None):
         assert isinstance(type_, DatasetType)
 
-        #: :rtype: DatasetType
         self.type = type_
 
         #: The document describing the dataset as a dictionary. It is often serialised as YAML on disk
         #: or inside a NetCDF file, and as JSON-B inside the database index.
-        #: :type: dict
         self.metadata_doc = metadata_doc
 
         if local_uri:
@@ -103,33 +108,29 @@ class Dataset(object):
         self.uris = uris
 
         #: The datasets that this dataset is derived from (if requested on load).
-        #: :type: dict[str, Dataset]
         self.sources = sources
 
-        if sources is not None:
+        if self.sources is not None:
             assert set(self.metadata.sources.keys()) == set(self.sources.keys())
 
         #: The User who indexed this dataset
-        #: :type: str
         self.indexed_by = indexed_by
-
-        #: :type: datetime.datetime
         self.indexed_time = indexed_time
-
         # When the dataset was archived. Null it not archived.
-        #: :type: datetime.datetime
         self.archived_time = archived_time
 
     @property
-    def metadata_type(self):
+    def metadata_type(self) -> Optional['MetadataType']:
         return self.type.metadata_type if self.type else None
 
     @property
-    def local_uri(self):
+    def local_uri(self) -> Optional[str]:
         """
         The latest local file uri, if any.
-        :rtype: str
         """
+        if self.uris is None:
+            return None
+
         local_uris = [uri for uri in self.uris if uri.startswith('file:')]
         if local_uris:
             return local_uris[0]
@@ -137,28 +138,25 @@ class Dataset(object):
         return None
 
     @property
-    def local_path(self):
+    def local_path(self) -> Optional[Path]:
         """
         A path to this dataset on the local filesystem (if available).
-
-        :rtype: pathlib.Path
         """
         return uri_to_local_path(self.local_uri)
 
     @property
-    def id(self):
-        """
-        :rtype: UUID
+    def id(self) -> UUID:
+        """ UUID of a dataset
         """
         # This is a string in a raw document.
         return UUID(self.metadata.id)
 
     @property
-    def managed(self):
+    def managed(self) -> bool:
         return self.type.managed
 
     @property
-    def format(self):
+    def format(self) -> str:
         return self.metadata.format
 
     @property
@@ -177,32 +175,47 @@ class Dataset(object):
         return self.metadata.measurements
 
     @cached_property
-    def center_time(self):
-        """
-        :rtype: datetime.datetime
+    def center_time(self) -> Optional[datetime]:
+        """ mid-point of time range
         """
         time = self.time
+        if time is None:
+            return None
         return time.begin + (time.end - time.begin) // 2
 
     @property
-    def time(self):
-        time = self.metadata.time
-        return Range(parse_time(time.begin), parse_time(time.end))
+    def time(self) -> Optional[Range]:
+        try:
+            time = self.metadata.time
+            return Range(parse_time(time.begin), parse_time(time.end))
+        except AttributeError:
+            return None
 
     @property
-    def bounds(self):
+    def bounds(self) -> Optional[geometry.BoundingBox]:
         """
         :rtype: geometry.BoundingBox
         """
-        bounds = self.metadata.grid_spatial['geo_ref_points']
+        gs = self._gs
+        if gs is None:
+            return None
+
+        bounds = gs['geo_ref_points']
         return geometry.BoundingBox(left=min(bounds['ur']['x'], bounds['ll']['x']),
                                     right=max(bounds['ur']['x'], bounds['ll']['x']),
                                     top=max(bounds['ur']['y'], bounds['ll']['y']),
                                     bottom=min(bounds['ur']['y'], bounds['ll']['y']))
 
     @property
-    def transform(self):
-        bounds = self.metadata.grid_spatial['geo_ref_points']
+    def transform(self) -> Optional[Affine]:
+        geo = self._gs
+        if geo is None:
+            return None
+
+        bounds = geo.get('geo_ref_points')
+        if bounds is None:
+            return None
+
         return Affine(bounds['lr']['x'] - bounds['ul']['x'], 0, bounds['ul']['x'],
                       0, bounds['lr']['y'] - bounds['ul']['y'], bounds['ul']['y'])
 
@@ -231,11 +244,18 @@ class Dataset(object):
         return not self.is_archived
 
     @property
-    def crs(self):
+    def _gs(self) -> Optional[Dict[str, Any]]:
+        try:
+            return self.metadata.grid_spatial
+        except AttributeError:
+            return None
+
+    @property
+    def crs(self) -> Optional[geometry.CRS]:
+        """ Return CRS if available
         """
-        :rtype: geometry.CRS
-        """
-        projection = self.metadata.grid_spatial
+        projection = self._gs
+
         if not projection:
             return None
 
@@ -274,7 +294,7 @@ class Dataset(object):
             return obj['x'], obj['y']
 
         # If no projection or crs, they have no extent.
-        projection = self.metadata.grid_spatial
+        projection = self._gs
         if not projection:
             return None
         crs = self.crs
@@ -308,10 +328,12 @@ class Dataset(object):
         return self.__str__()
 
     @property
-    def metadata(self):
+    def metadata(self) -> DocReader:
+        if self.metadata_type is None:
+            raise ValueError('Can not interpret dataset without metadata type set')
         return self.metadata_type.dataset_reader(self.metadata_doc)
 
-    def metadata_doc_without_lineage(self):
+    def metadata_doc_without_lineage(self) -> Dict[str, Any]:
         """ Return metadata document without nested lineage datasets
         """
         return without_lineage_sources(self.metadata_doc, self.metadata_type)
@@ -336,7 +358,7 @@ class Measurement(dict):
     """
     REQUIRED_KEYS = ('name', 'dtype', 'nodata', 'units')
     OPTIONAL_KEYS = ('aliases', 'spectral_definition', 'flags_definition')
-    ATTR_BLACKLIST = set(['name', 'dtype', 'aliases', 'resampling_method'])
+    ATTR_BLACKLIST = set(['name', 'dtype', 'aliases', 'resampling_method', 'fuser'])
 
     def __init__(self, **kwargs):
         missing_keys = set(self.REQUIRED_KEYS) - set(kwargs)
@@ -370,33 +392,28 @@ class MetadataType(object):
     """Metadata Type definition"""
 
     def __init__(self,
-                 definition,
-                 dataset_search_fields,
-                 id_=None):
-        #: :type: dict
+                 definition: Mapping[str, Any],
+                 dataset_search_fields: Mapping[str, Field],
+                 id_: Optional[int] = None):
         self.definition = definition
-
-        #: :type: dict[str,datacube.index.fields.Field]
         self.dataset_fields = dataset_search_fields
-
-        #: :type: int
         self.id = id_
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.definition['name']
 
     @property
-    def description(self):
+    def description(self) -> str:
         return self.definition['description']
 
-    def dataset_reader(self, dataset_doc):
+    def dataset_reader(self, dataset_doc: Mapping[str, Field]) -> DocReader:
         return DocReader(self.definition['dataset'], self.dataset_fields, dataset_doc)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "MetadataType(name={name!r}, id_={id!r})".format(id=self.id, name=self.name)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self)
 
 
@@ -410,33 +427,25 @@ class DatasetType(object):
     """
 
     def __init__(self,
-                 metadata_type,
-                 definition,
-                 id_=None):
+                 metadata_type: MetadataType,
+                 definition: Mapping[str, Any],
+                 id_: Optional[int] = None):
         assert isinstance(metadata_type, MetadataType)
-
-        #: :type: int
         self.id = id_
-
-        #: :rtype: MetadataType
         self.metadata_type = metadata_type
-
         #: product definition document
         self.definition = definition
 
     @property
-    def name(self):
-        """
-        :type: str
-        """
+    def name(self) -> str:
         return self.definition['name']
 
     @property
-    def managed(self):
+    def managed(self) -> bool:
         return self.definition.get('managed', False)
 
     @property
-    def metadata_doc(self):
+    def metadata_doc(self) -> Mapping[str, Any]:
         return self.definition['metadata']
 
     @property
@@ -448,11 +457,9 @@ class DatasetType(object):
         return self.metadata_type.dataset_reader(self.metadata_doc).fields
 
     @property
-    def measurements(self):
+    def measurements(self) -> Mapping[str, Measurement]:
         """
         Dictionary of measurements in this product
-
-        :type: dict[str, dict]
         """
         return OrderedDict((m['name'], Measurement(**m)) for m in self.definition.get('measurements', []))
 
@@ -472,11 +479,9 @@ class DatasetType(object):
         return ('time',) + spatial_dims
 
     @cached_property
-    def grid_spec(self):
+    def grid_spec(self) -> Optional['GridSpec']:
         """
         Grid specification for this product
-
-        :rtype: GridSpec
         """
         storage = self.definition.get('storage')
         if storage is None:
@@ -497,7 +502,7 @@ class DatasetType(object):
 
         return GridSpec(crs=crs, **gs_params)
 
-    def canonical_measurement(self, measurement):
+    def canonical_measurement(self, measurement: str):
         for m in self.measurements:
             if measurement == m:
                 return measurement
@@ -521,15 +526,34 @@ class DatasetType(object):
     def dataset_reader(self, dataset_doc):
         return self.metadata_type.dataset_reader(dataset_doc)
 
-    def __str__(self):
+    def to_dict(self) -> Mapping[str, Any]:
+        """
+        Convert to a dictionary representation of the available fields
+        """
+        row = {
+            'id': self.id,
+            'name': self.name,
+            'description': self.definition['description'],
+        }
+        row.update(self.fields)
+        if self.grid_spec is not None:
+            row.update({
+                'crs': str(self.grid_spec.crs),
+                'spatial_dimensions': self.grid_spec.dimensions,
+                'tile_size': self.grid_spec.tile_size,
+                'resolution': self.grid_spec.resolution,
+            })
+        return row
+
+    def __str__(self) -> str:
         return "DatasetType(name={name!r}, id_={id!r})".format(id=self.id, name=self.name)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
     # Types are uniquely identifiable by name:
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if self is other:
             return True
 
@@ -560,7 +584,7 @@ def _polygon_from_boundingbox(boundingbox, crs=None):
     return geometry.polygon(points, crs=crs)
 
 
-GeoPolygon.from_boundingbox = _polygon_from_boundingbox
+GeoPolygon.from_boundingbox = _polygon_from_boundingbox  # type: ignore
 
 
 def _polygon_from_sources_extents(sources, geobox):
@@ -570,7 +594,7 @@ def _polygon_from_sources_extents(sources, geobox):
     return valid_data.simplify(tolerance=resolution * 0.01)
 
 
-GeoPolygon.from_sources_extents = _polygon_from_sources_extents
+GeoPolygon.from_sources_extents = _polygon_from_sources_extents  # type: ignore
 
 
 class GridSpec(object):
@@ -759,11 +783,30 @@ class GridSpec(object):
         return self.__str__()
 
 
-def metadata_from_doc(doc):
+def metadata_from_doc(doc: Mapping[str, Any]) -> MetadataType:
     """Construct MetadataType that is not tied to any particular db index. This is
     useful when there is a need to interpret dataset metadata documents
     according to metadata spec.
     """
     from .fields import get_dataset_fields
-    MetadataType.validate(doc)
+    MetadataType.validate(doc)  # type: ignore
     return MetadataType(doc, get_dataset_fields(doc))
+
+
+def _range_representer(dumper: yaml.Dumper, data: Range) -> yaml.Node:
+    begin, end = data
+
+    # pyyaml doesn't output timestamps in flow style as timestamps(?)
+    if isinstance(begin, datetime):
+        begin = begin.isoformat()
+    if isinstance(end, datetime):
+        end = end.isoformat()
+
+    return dumper.represent_mapping(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        (('begin', begin), ('end', end)),
+        flow_style=True
+    )
+
+
+SafeDatacubeDumper.add_representer(Range, _range_representer)

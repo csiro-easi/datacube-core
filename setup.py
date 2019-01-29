@@ -14,6 +14,7 @@ tests_require = [
     'pytest',
     'pytest-cov',
     'pytest-timeout',
+    'moto',
 ]
 
 extras_require = {
@@ -32,10 +33,6 @@ extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 extra_plugins = dict(read=[], write=[], index=[])
 
 if os.name != 'nt':
-    extra_plugins['read'].extend([
-        's3aio = datacube.drivers.s3.driver:reader_driver_init [s3]',
-        's3aio_test = datacube.drivers.s3.driver:reader_test_driver_init [s3]',
-    ])
     extra_plugins['write'].extend([
         's3aio = datacube.drivers.s3.driver:writer_driver_init [s3]',
         's3aio_test = datacube.drivers.s3.driver:writer_test_driver_init [s3]',
@@ -96,7 +93,7 @@ setup(
         'click>=5.0',
         'cloudpickle>=0.4',
         'dask[array]',
-        'gdal>=1.9',
+        'gdal>=1.9,<2.4',
         'jsonschema',
         'netcdf4',
         'numpy==1.15.4', # Pinned awaiting fix to "AttributeError: type object 'numpy.ndarray' has no attribute 'array_function'" https://github.com/numpy/numpy/issues/12736
