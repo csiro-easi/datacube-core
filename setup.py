@@ -96,7 +96,7 @@ setup(
         'gdal>=1.9,<2.4',
         'jsonschema',
         'netcdf4',
-        'numpy==1.15.4', # Pinned awaiting fix to "AttributeError: type object 'numpy.ndarray' has no attribute 'array_function'" https://github.com/numpy/numpy/issues/12736
+        'numpy',
         'psycopg2',
         'pypeg2',
         'python-dateutil',
