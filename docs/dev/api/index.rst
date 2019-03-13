@@ -68,8 +68,8 @@ Grid Processing API
 .. autosummary::
    :toctree: generate/
 
+   Tile
    GridWorkflow
-   grid_workflow.Tile
    GridWorkflow.list_cells
    GridWorkflow.list_tiles
    GridWorkflow.load
@@ -101,7 +101,6 @@ Internal Data Model
    GridSpec
 
    Range
-   CellIndex
 
 
 
@@ -258,6 +257,8 @@ Geometry Classes
    utils.geometry.BoundingBox
    utils.geometry.CRS
    utils.geometry.Geometry
+   utils.geometry.GeoBox
+   utils.geometry.gbox.GeoboxTiles
    model.GridSpec
 
 .. Geometry.contains

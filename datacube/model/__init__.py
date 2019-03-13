@@ -5,65 +5,25 @@ Core classes used across modules.
 import logging
 import math
 import warnings
-from collections import OrderedDict, Sequence
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-import yaml
 from affine import Affine
-from typing import Optional, List, Mapping, Any, Dict
+from typing import Optional, List, Mapping, Any, Dict, Tuple, Iterator
 
 from urllib.parse import urlparse
 from datacube.utils import geometry, without_lineage_sources, parse_time, cached_property, uri_to_local_path, \
     schema_validated, DocReader
-from datacube.utils.geometry import (CRS as _CRS,
-                                     GeoBox as _GeoBox,
-                                     Coordinate as _Coordinate,
-                                     BoundingBox as _BoundingBox, intersects)
-from datacube.utils.serialise import SafeDatacubeDumper
 from .fields import Field
 from ._base import Range
 
 _LOG = logging.getLogger(__name__)
 
-NETCDF_VAR_OPTIONS = {'zlib', 'complevel', 'shuffle', 'fletcher32', 'contiguous'}
-VALID_VARIABLE_ATTRS = {'standard_name', 'long_name', 'units', 'flags_definition'}
 DEFAULT_SPATIAL_DIMS = ('y', 'x')  # Used when product lacks grid_spec
 
 SCHEMA_PATH = Path(__file__).parent / 'schema'
-
-
-class CRS(_CRS):
-    def __init__(self, *args, **kwargs):
-        warnings.warn("The 'CRS' class has been renamed to 'datacube.utils.geometry.CRS' and will be "
-                      "removed from 'datacube.model'. Please update your code.",
-                      DeprecationWarning)
-        super(CRS, self).__init__(*args, **kwargs)
-
-
-class GeoBox(_GeoBox):
-    def __init__(self, *args, **kwargs):
-        warnings.warn("The 'GeoBox' class has been renamed to 'datacube.utils.geometry.GeoBox' and will be "
-                      "removed from 'datacube.model'. Please update your code.",
-                      DeprecationWarning)
-        super(GeoBox, self).__init__(*args, **kwargs)
-
-
-class Coordinate(_Coordinate):
-    def __init__(self, *args, **kwargs):
-        warnings.warn("The 'Coordinate' class has been renamed to 'datacube.utils.geometry.Coordinate' and will be "
-                      "removed from 'datacube.model'. Please update your code.",
-                      DeprecationWarning)
-        super(Coordinate, self).__init__(*args, **kwargs)
-
-
-class BoundingBox(_BoundingBox):  # pylint: disable=duplicate-bases
-    def __init__(self, *args, **kwargs):
-        warnings.warn("The 'BoundingBox' class has been renamed to 'datacube.utils.geometry.BoundingBox' and will be "
-                      "removed from 'datacube.model'. Please update your code.",
-                      DeprecationWarning)
-        super(BoundingBox, self).__init__(*args, **kwargs)
 
 
 class Dataset(object):
@@ -72,9 +32,8 @@ class Dataset(object):
 
     Most important parts are the metadata_doc and uri.
 
-    :type type_: DatasetType
-    :param dict metadata_doc: the document (typically a parsed json/yaml)
-    :param list[str] uris: All active uris for the dataset
+    :param metadata_doc: the document (typically a parsed json/yaml)
+    :param uris: All active uris for the dataset
     """
 
     def __init__(self,
@@ -160,14 +119,17 @@ class Dataset(object):
         return self.metadata.format
 
     @property
-    def uri_scheme(self):
+    def uri_scheme(self) -> str:
+        if self.uris is None or len(self.uris) == 0:
+            return ''
+
         url = urlparse(self.uris[0])
         if url.scheme == '':
             return 'file'
         return url.scheme
 
     @property
-    def measurements(self):
+    def measurements(self) -> Dict[str, Any]:
         # It's an optional field in documents.
         # Dictionary of key -> measurement descriptor
         if not hasattr(self.metadata, 'measurements'):
@@ -191,10 +153,23 @@ class Dataset(object):
         except AttributeError:
             return None
 
+    @cached_property
+    def key_time(self):
+        """
+        :rtype: datetime.datetime
+        """
+        if 'key_time' in self.metadata.fields:
+            return self.metadata.key_time
+
+        # Existing datasets are already using the computed "center_time" for their storage index key
+        # if 'center_time' in self.metadata.fields:
+        #     return self.metadata.center_time
+
+        return self.center_time
+
     @property
     def bounds(self) -> Optional[geometry.BoundingBox]:
-        """
-        :rtype: geometry.BoundingBox
+        """ :returns: bounding box of the dataset in the native crs
         """
         gs = self._gs
         if gs is None:
@@ -220,7 +195,7 @@ class Dataset(object):
                       0, bounds['lr']['y'] - bounds['ul']['y'], bounds['ul']['y'])
 
     @property
-    def is_archived(self):
+    def is_archived(self) -> bool:
         """
         Is this dataset archived?
 
@@ -228,18 +203,16 @@ class Dataset(object):
         replaced by another dataset. It will not show up in search results, but still exists in the
         system via provenance chains or through id lookup.)
 
-        :rtype: bool
         """
         return self.archived_time is not None
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         """
         Is this dataset active?
 
         (ie. dataset hasn't been archived)
 
-        :rtype: bool
         """
         return not self.is_archived
 
@@ -285,9 +258,8 @@ class Dataset(object):
         return None
 
     @cached_property
-    def extent(self):
-        """
-        :rtype: geometry.Geometry
+    def extent(self) -> Optional[geometry.Geometry]:
+        """ :returns: valid extent of the dataset or None
         """
 
         def xytuple(obj):
@@ -312,7 +284,7 @@ class Dataset(object):
 
         return None
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         return self.id == other.id
 
     def __hash__(self):
@@ -324,7 +296,7 @@ class Dataset(object):
                                                                      type=self.type.name,
                                                                      loc=str_loc)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
     @property
@@ -367,22 +339,22 @@ class Measurement(dict):
 
         super().__init__(**kwargs)
 
-    def __getattr__(self, key):
+    def __getattr__(self, key: str) -> Any:
         """ Allow access to items as attributes. """
         v = self.get(key, self)
         if v is self:
             raise AttributeError("'Measurement' object has no attribute '{}'".format(key))
         return v
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "Measurement({})".format(super(Measurement, self).__repr__())
 
-    def copy(self):
+    def copy(self) -> 'Measurement':
         """Required as the super class `dict` method returns a `dict`
            and does not preserve Measurement class"""
         return Measurement(**self)
 
-    def dataarray_attrs(self):
+    def dataarray_attrs(self) -> Dict[str, Any]:
         """This returns attributes filtered for display in a dataarray."""
         return {key: value for key, value in self.items() if key not in self.ATTR_BLACKLIST}
 
@@ -449,7 +421,7 @@ class DatasetType(object):
         return self.definition['metadata']
 
     @property
-    def metadata(self):
+    def metadata(self) -> DocReader:
         return self.metadata_type.dataset_reader(self.metadata_doc)
 
     @property
@@ -464,11 +436,9 @@ class DatasetType(object):
         return OrderedDict((m['name'], Measurement(**m)) for m in self.definition.get('measurements', []))
 
     @property
-    def dimensions(self):
+    def dimensions(self) -> Tuple[str, str]:
         """
-        List of dimensions for data in this product
-
-        :type: tuple[str]
+        List of dimension labels for data in this product
         """
         assert self.metadata_type.name == 'eo'
         if self.grid_spec is not None:
@@ -502,7 +472,9 @@ class DatasetType(object):
 
         return GridSpec(crs=crs, **gs_params)
 
-    def canonical_measurement(self, measurement: str):
+    def canonical_measurement(self, measurement: str) -> str:
+        """ resolve measurement alias into canonical name
+        """
         for m in self.measurements:
             if measurement == m:
                 return measurement
@@ -510,12 +482,11 @@ class DatasetType(object):
                 return m
         raise KeyError(measurement)
 
-    def lookup_measurements(self, measurements=None):
+    def lookup_measurements(self, measurements: Optional[List[str]] = None) -> Mapping[str, Measurement]:
         """
         Find measurements by name
 
-        :param list[str] measurements: list of measurement names
-        :rtype: OrderedDict[str,dict]
+        :param measurements: list of measurement names
         """
         my_measurements = self.measurements
         if measurements is None:
@@ -566,37 +537,6 @@ class DatasetType(object):
         return hash(self.name)
 
 
-def GeoPolygon(coordinates, crs):  # pylint: disable=invalid-name
-    warnings.warn("GeoPolygon is depricated. Use 'datacube.utils.geometry.polygon'", DeprecationWarning)
-    if not isinstance(coordinates, Sequence):
-        raise ValueError("points ({}) must be a sequence of (x, y) coordinates".format(coordinates))
-    return geometry.polygon(coordinates + [coordinates[0]], crs=crs)
-
-
-def _polygon_from_boundingbox(boundingbox, crs=None):
-    points = [
-        (boundingbox.left, boundingbox.top),
-        (boundingbox.right, boundingbox.top),
-        (boundingbox.right, boundingbox.bottom),
-        (boundingbox.left, boundingbox.bottom),
-        (boundingbox.left, boundingbox.top),
-    ]
-    return geometry.polygon(points, crs=crs)
-
-
-GeoPolygon.from_boundingbox = _polygon_from_boundingbox  # type: ignore
-
-
-def _polygon_from_sources_extents(sources, geobox):
-    sources_union = geometry.unary_union(source.extent.to_crs(geobox.crs) for source in sources)
-    valid_data = geobox.extent.intersection(sources_union)
-    resolution = min([abs(x) for x in geobox.resolution])
-    return valid_data.simplify(tolerance=resolution * 0.01)
-
-
-GeoPolygon.from_sources_extents = _polygon_from_sources_extents  # type: ignore
-
-
 class GridSpec(object):
     """
     Definition for a regular spatial grid
@@ -618,14 +558,14 @@ class GridSpec(object):
     :param [float,float] origin: (Y, X) coordinates of a corner of the (0,0) tile in CRS units. default is (0.0, 0.0)
     """
 
-    def __init__(self, crs, tile_size, resolution, origin=None):
-        #: :rtype: geometry.CRS
+    def __init__(self,
+                 crs: geometry.CRS,
+                 tile_size: Tuple[float, float],
+                 resolution: Tuple[float, float],
+                 origin: Optional[Tuple[float, float]] = None):
         self.crs = crs
-        #: :type: (float,float)
         self.tile_size = tile_size
-        #: :type: (float,float)
         self.resolution = resolution
-        #: :type: (float, float)
         self.origin = origin or (0.0, 0.0)
 
     def __eq__(self, other):
@@ -638,52 +578,51 @@ class GridSpec(object):
                 and self.origin == other.origin)
 
     @property
-    def dimensions(self):
+    def dimensions(self) -> Tuple[str, str]:
         """
         List of dimension names of the grid spec
 
-        :type: (str,str)
         """
         return self.crs.dimensions
 
     @property
-    def alignment(self):
+    def alignment(self) -> Tuple[float, float]:
         """
         Pixel boundary alignment
-
-        :type: (float,float)
         """
-        return tuple(orig % abs(res) for orig, res in zip(self.origin, self.resolution))
+        y, x = (orig % abs(res) for orig, res in zip(self.origin, self.resolution))
+        return (y, x)
 
     @property
-    def tile_resolution(self):
+    def tile_resolution(self) -> Tuple[float, float]:
         """
         Tile size in pixels in CRS dimension order (Usually y,x or lat,lon)
-
-        :type: (float, float)
         """
-        return tuple(int(abs(ts / res)) for ts, res in zip(self.tile_size, self.resolution))
+        y, x = (int(abs(ts / res)) for ts, res in zip(self.tile_size, self.resolution))
+        return (y, x)
 
-    def tile_coords(self, tile_index):
+    def tile_coords(self, tile_index: Tuple[int, int]) -> Tuple[float, float]:
         """
         Tile coordinates in (Y,X) order
 
-        :param (int,int) tile_index: in X,Y order
-        :rtype: (float,float)
+        :param tile_index: in X,Y order
         """
 
-        def coord(index, resolution, size, origin):
+        def coord(index: int,
+                  resolution: float,
+                  size: float,
+                  origin: float) -> float:
             return (index + (1 if resolution < 0 < size else 0)) * size + origin
 
-        return tuple(coord(index, res, size, origin) for index, res, size, origin in
-                     zip(tile_index[::-1], self.resolution, self.tile_size, self.origin))
+        y, x = (coord(index, res, size, origin)
+                for index, res, size, origin in zip(tile_index[::-1], self.resolution, self.tile_size, self.origin))
+        return (y, x)
 
-    def tile_geobox(self, tile_index):
+    def tile_geobox(self, tile_index: Tuple[int, int]) -> geometry.GeoBox:
         """
         Tile geobox.
 
         :param (int,int) tile_index:
-        :rtype: datacube.utils.geometry.GeoBox
         """
         res_y, res_x = self.resolution
         y, x = self.tile_coords(tile_index)
@@ -691,7 +630,9 @@ class GridSpec(object):
         geobox = geometry.GeoBox(crs=self.crs, affine=Affine(res_x, 0.0, x, 0.0, res_y, y), width=w, height=h)
         return geobox
 
-    def tiles(self, bounds, geobox_cache=None):
+    def tiles(self, bounds: geometry.BoundingBox,
+              geobox_cache: Optional[dict] = None) -> Iterator[Tuple[Tuple[int, int],
+                                                                     geometry.GeoBox]]:
         """
         Returns an iterator of tile_index, :py:class:`GeoBox` tuples across
         the grid and overlapping with the specified `bounds` rectangle.
@@ -722,7 +663,10 @@ class GridSpec(object):
                 tile_index = (x, y)
                 yield tile_index, geobox(tile_index)
 
-    def tiles_from_geopolygon(self, geopolygon, tile_buffer=None, geobox_cache=None):
+    def tiles_from_geopolygon(self, geopolygon: geometry.Geometry,
+                              tile_buffer: Optional[Tuple[float, float]] = None,
+                              geobox_cache: Optional[dict] = None) -> Iterator[Tuple[Tuple[int, int],
+                                                                                     geometry.GeoBox]]:
         """
         Returns an iterator of tile_index, :py:class:`GeoBox` tuples across
         the grid and overlapping with the specified `geopolygon`.
@@ -745,11 +689,11 @@ class GridSpec(object):
         for tile_index, tile_geobox in self.tiles(bbox, geobox_cache):
             tile_geobox = tile_geobox.buffered(*tile_buffer) if tile_buffer else tile_geobox
 
-            if intersects(tile_geobox.extent, geopolygon):
+            if geometry.intersects(tile_geobox.extent, geopolygon):
                 yield (tile_index, tile_geobox)
 
     @staticmethod
-    def grid_range(lower, upper, step):
+    def grid_range(lower: float, upper: float, step: float) -> range:
         """
         Returns the indices along a 1D scale.
 
@@ -775,11 +719,11 @@ class GridSpec(object):
         assert step > 0.0
         return range(int(math.floor(lower / step)), int(math.ceil(upper / step)))
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "GridSpec(crs=%s, tile_size=%s, resolution=%s)" % (
             self.crs, self.tile_size, self.resolution)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
 
@@ -791,22 +735,3 @@ def metadata_from_doc(doc: Mapping[str, Any]) -> MetadataType:
     from .fields import get_dataset_fields
     MetadataType.validate(doc)  # type: ignore
     return MetadataType(doc, get_dataset_fields(doc))
-
-
-def _range_representer(dumper: yaml.Dumper, data: Range) -> yaml.Node:
-    begin, end = data
-
-    # pyyaml doesn't output timestamps in flow style as timestamps(?)
-    if isinstance(begin, datetime):
-        begin = begin.isoformat()
-    if isinstance(end, datetime):
-        end = end.isoformat()
-
-    return dumper.represent_mapping(
-        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-        (('begin', begin), ('end', end)),
-        flow_style=True
-    )
-
-
-SafeDatacubeDumper.add_representer(Range, _range_representer)

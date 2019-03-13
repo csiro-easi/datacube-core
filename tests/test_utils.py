@@ -103,12 +103,18 @@ def test_uri_to_local_path():
 def test_uri_resolve():
     abs_path = '/abs/path/to/something'
     some_uri = 'http://example.com/file.txt'
-    base = 's3://foo'
-    assert uri_resolve(base, abs_path) == "file://" + abs_path
-    assert uri_resolve(base, some_uri) is some_uri
-    assert uri_resolve(base, None) is base
-    assert uri_resolve(base, '') is base
-    assert uri_resolve(base, 'relative/path') == base + '/relative/path'
+    s3_base = 's3://foo'
+    gs_base = 'gs://foo'
+    assert uri_resolve(s3_base, abs_path) == "file://" + abs_path
+    assert uri_resolve(s3_base, some_uri) is some_uri
+    assert uri_resolve(s3_base, None) is s3_base
+    assert uri_resolve(s3_base, '') is s3_base
+    assert uri_resolve(s3_base, 'relative/path') == s3_base + '/relative/path'
+    assert uri_resolve(gs_base, abs_path) == "file://" + abs_path
+    assert uri_resolve(gs_base, some_uri) is some_uri
+    assert uri_resolve(gs_base, None) is gs_base
+    assert uri_resolve(gs_base, '') is gs_base
+    assert uri_resolve(gs_base, 'relative/path') == gs_base + '/relative/path'
 
 
 def test_pick_uri():
@@ -823,7 +829,25 @@ def test_testutils_geobox():
     assert gbox.crs.epsg == 3578
     assert gbox.transform == A
 
-    crs_ = dc_crs_from_rio(CRS.from_wkt(crs.wkt))
+    wkt = '''PROJCS["unnamed",
+    GEOGCS["NAD83",
+       DATUM["North_American_Datum_1983",
+             SPHEROID["GRS 1980",6378137,298.257222101, AUTHORITY["EPSG","7019"]],
+             TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6269"]],
+       PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],
+       UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],
+       ],
+    PROJECTION["Albers_Conic_Equal_Area"],
+    PARAMETER["standard_parallel_1",61.66666666666666],
+    PARAMETER["standard_parallel_2",68],
+    PARAMETER["latitude_of_center",59],
+    PARAMETER["longitude_of_center",-132.5],
+    PARAMETER["false_easting",500000],
+    PARAMETER["false_northing",500000],
+    UNIT["Meter",1]]
+    '''
+
+    crs_ = dc_crs_from_rio(CRS.from_wkt(wkt))
     assert crs_.epsg is None
 
 

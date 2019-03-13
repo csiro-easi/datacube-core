@@ -7,6 +7,8 @@ import pickle
 from datacube.utils import geometry
 from datacube.utils.geometry import (
     GeoBox,
+    BoundingBox,
+    bbox_union,
     decompose_rws,
     affine_from_pts,
     get_scale_at_point,
@@ -20,6 +22,7 @@ from datacube.utils.geometry import (
     is_affine_st,
     apply_affine,
     compute_axis_overlap,
+    roi_is_empty,
     w_,
 )
 from datacube.testutils.geom import (
@@ -93,6 +96,10 @@ def test_props():
     bbox = geometry.BoundingBox(1, 0, 10, 13)
     assert bbox.width == 9
     assert bbox.height == 13
+    assert bbox.points == [(1, 0), (1, 13), (10, 0), (10, 13)]
+
+    assert bbox.transform(Affine.identity()) == bbox
+    assert bbox.transform(Affine.translation(1, 2)) == geometry.BoundingBox(2, 2, 11, 15)
 
     pt = geometry.point(3, 4, crs)
     assert pt.json['coordinates'] == (3.0, 4.0)
@@ -173,6 +180,20 @@ def test_ops():
     assert pt.interpolate(3) is None
 
 
+def test_bbox_union():
+    b1 = BoundingBox(0, 1, 10, 20)
+    b2 = BoundingBox(5, 6, 11, 22)
+
+    assert bbox_union([b1]) == b1
+    assert bbox_union([b2]) == b2
+
+    bb = bbox_union(iter([b1, b2]))
+    assert bb == BoundingBox(0, 1, 11, 22)
+
+    bb = bbox_union(iter([b2, b1]*10))
+    assert bb == BoundingBox(0, 1, 11, 22)
+
+
 def test_unary_union():
     box1 = geometry.box(10, 10, 30, 30, crs=epsg4326)
     box2 = geometry.box(20, 10, 40, 30, crs=epsg4326)
@@ -197,6 +218,8 @@ def test_unary_union():
     union4 = geometry.unary_union([union1, box2, box3])
     assert union4.type == 'Polygon'
     assert union4.area == 2.5 * box1.area
+
+    assert geometry.unary_union([]) is None
 
     with pytest.raises(ValueError):
         pt = geometry.point(6, 7, epsg4326)
@@ -957,6 +980,31 @@ def test_compute_reproject_roi():
     assert rr.scale == 1
     assert roi_shape(rr.roi_src) == roi_shape(rr.roi_dst)
     assert roi_shape(rr.roi_dst) == src[roi_].shape
+
+
+def test_compute_reproject_roi_issue647():
+    """ In some scenarios non-overlapping geoboxes will result in non-empty
+    `roi_dst` even though `roi_src` is empty.
+
+    Test this case separately.
+    """
+    from datacube.utils.geometry import CRS
+
+    src = GeoBox(10980, 10980,
+                 Affine(10, 0, 300000,
+                        0, -10, 5900020),
+                 CRS('epsg:32756'))
+
+    dst = GeoBox(976, 976, Affine(10, 0, 1730240,
+                                  0, -10, -4170240),
+                 CRS('EPSG:3577'))
+
+    assert src.extent.overlaps(dst.extent.to_crs(src.crs)) is False
+
+    rr = compute_reproject_roi(src, dst)
+
+    assert roi_is_empty(rr.roi_src)
+    assert roi_is_empty(rr.roi_dst)
 
 
 def test_window_from_slice():

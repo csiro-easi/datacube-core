@@ -1,23 +1,22 @@
 import uuid
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict
 from itertools import groupby
-from math import ceil
+from typing import Union, Optional, Dict, Tuple
 
 import numpy
-import pandas
 import xarray
-
 from dask import array as da
 
 from datacube.config import LocalConfig
 from datacube.storage import reproject_and_fuse, BandInfo
 from datacube.utils import geometry
-from datacube.utils.geometry import intersects
+from datacube.utils.geometry import intersects, GeoBox
+from datacube.utils.geometry.gbox import GeoboxTiles
+from datacube.model.utils import xr_apply
+
 from .query import Query, query_group_by, query_geopolygon
 from ..index import index_connect
 from ..drivers import new_datasource
-
-Group = namedtuple('Group', ['key', 'datasets'])
 
 
 class Datacube(object):
@@ -88,6 +87,7 @@ class Datacube(object):
         if not with_pandas:
             return rows
 
+        import pandas
         keys = set(k for r in rows for k in r)
         main_cols = ['id', 'name', 'description']
         grid_cols = ['crs', 'resolution', 'tile_size', 'spatial_dimensions']
@@ -106,6 +106,8 @@ class Datacube(object):
         measurements = self._list_measurements()
         if not with_pandas:
             return measurements
+
+        import pandas
         return pandas.DataFrame.from_dict(measurements).set_index(['product', 'measurement'])
 
     def _list_measurements(self):
@@ -126,6 +128,7 @@ class Datacube(object):
 
     #: pylint: disable=too-many-arguments, too-many-locals
     def load(self, product=None, measurements=None, output_crs=None, resolution=None, resampling=None,
+             skip_broken_datasets=False,
              dask_chunks=None, like=None, fuse_func=None, align=None, datasets=None, **query):
         """
         Load data as an ``xarray`` object.  Each measurement will be a data variable in the :class:`xarray.Dataset`.
@@ -217,10 +220,15 @@ class Datacube(object):
             Typically when using most CRSs, the first number would be negative.
 
         :param str|dict resampling:
-            The resampling method to use if re-projection is required.
+            The resampling method to use if re-projection is required. This could be a string or
+            a dictionary mapping band name to resampling mode. When using a dict use ``'*'`` to
+            indicate "apply to all other bands", for example ``{'*': 'cubic', 'fmask': 'nearest'}`` would
+            use `cubic` for all bands except ``fmask`` for which `nearest` will be used.
 
             Valid values are: ``'nearest', 'cubic', 'bilinear', 'cubic_spline', 'lanczos', 'average',
             'mode', 'gauss',  'max', 'min', 'med', 'q1', 'q3'``
+
+            Default is to use ``nearest`` for all bands.
             .. seealso:: :meth:`load_data`
 
         :param (float,float) align:
@@ -291,6 +299,7 @@ class Datacube(object):
                                 resampling=resampling,
                                 fuse_func=fuse_func,
                                 dask_chunks=dask_chunks,
+                                skip_broken_datasets=skip_broken_datasets,
                                 **legacy_args)
 
         return apply_aliases(result, datacube_product, measurements)
@@ -349,14 +358,32 @@ class Datacube(object):
 
         .. seealso:: :meth:`find_datasets`, :meth:`load_data`, :meth:`query_group_by`
         """
-        dimension, group_func, units, sort_key = group_by
-        datasets.sort(key=sort_key)
-        groups = [Group(key, tuple(group)) for key, group in groupby(datasets, group_func)]
+        if isinstance(group_by, str):
+            group_by = query_group_by(group_by=group_by)
 
-        data = numpy.empty(len(groups), dtype=object)
-        for index, group in enumerate(groups):
-            data[index] = group.datasets
-        coords = [sort_key(v.datasets[0]) for v in groups]
+        dimension, group_func, units, sort_key = group_by
+
+        def ds_sorter(ds):
+            return sort_key(ds), getattr(ds, 'id', 0)
+
+        def mk_group(group):
+            dss = tuple(sorted(group, key=ds_sorter))
+            # TODO: decouple axis_value from group sorted order
+            axis_value = sort_key(dss[0])
+            return (axis_value, dss)
+
+        datasets = sorted(datasets, key=group_func)
+
+        groups = [mk_group(group)
+                  for _, group in groupby(datasets, group_func)]
+
+        groups.sort(key=lambda x: x[0])
+
+        coords = [coord for coord, _ in groups]
+        data = numpy.empty(len(coords), dtype=object)
+        for i, (_, dss) in enumerate(groups):
+            data[i] = dss
+
         sources = xarray.DataArray(data, dims=[dimension], coords=[coords])
         sources[dimension].attrs['units'] = units
         return sources
@@ -414,10 +441,27 @@ class Datacube(object):
     @staticmethod
     def _dask_load(sources, geobox, measurements, dask_chunks,
                    skip_broken_datasets=False):
+        needed_irr_chunks, grid_chunks = _calculate_chunk_sizes(sources, geobox, dask_chunks)
+        gbt = GeoboxTiles(geobox, grid_chunks)
+        dsk = {}
+
+        def chunk_datasets(dss, gbt):
+            out = {}
+            for ds in dss:
+                dsk[_tokenize_dataset(ds)] = ds
+                for idx in gbt.tiles(ds.extent):
+                    out.setdefault(idx, []).append(ds)
+            return out
+
+        chunked_srcs = xr_apply(sources,
+                                lambda _, dss: chunk_datasets(dss, gbt),
+                                dtype=object)
+
         def data_func(measurement):
-            return _make_dask_array(sources, geobox, measurement,
-                                    skip_broken_datasets=skip_broken_datasets,
-                                    dask_chunks=dask_chunks)
+            return _make_dask_array(chunked_srcs, dsk, gbt,
+                                    measurement,
+                                    chunks=needed_irr_chunks+grid_chunks,
+                                    skip_broken_datasets=skip_broken_datasets)
 
         return Datacube.create_storage(OrderedDict((dim, sources.coords[dim]) for dim in sources.dims),
                                        geobox, measurements, data_func)
@@ -471,6 +515,8 @@ class Datacube(object):
         :param dict dask_chunks:
             If provided, the data will be loaded on demand using using :class:`dask.array.Array`.
             Should be a dictionary specifying the chunking size for each output dimension.
+            Unspecified dimensions will be auto-guessed, currently this means use chunk size of 1 for non-spatial
+            dimensions and use whole dimension (no chunking unless specified) for spatial dimensions.
 
             See the documentation on using `xarray with dask <http://xarray.pydata.org/en/stable/dask.html>`_
             for more information.
@@ -642,11 +688,8 @@ def _fuse_measurement(dest, datasets, geobox, measurement,
 
 
 def get_bounds(datasets, crs):
-    left = min([d.extent.to_crs(crs).boundingbox.left for d in datasets])
-    right = max([d.extent.to_crs(crs).boundingbox.right for d in datasets])
-    top = max([d.extent.to_crs(crs).boundingbox.top for d in datasets])
-    bottom = min([d.extent.to_crs(crs).boundingbox.bottom for d in datasets])
-    return geometry.box(left, bottom, right, top, crs=crs)
+    bbox = geometry.bbox_union(ds.extent.to_crs(crs).boundingbox for ds in datasets)
+    return geometry.box(*bbox, crs=crs)
 
 
 def dataset_type_to_row(dt):
@@ -666,30 +709,34 @@ def dataset_type_to_row(dt):
     return row
 
 
-def _chunk_geobox(geobox, chunk_size):
-    num_grid_chunks = [int(ceil(s / float(c))) for s, c in zip(geobox.shape, chunk_size)]
-    geobox_subsets = {}
-    for grid_index in numpy.ndindex(*num_grid_chunks):
-        slices = [slice(min(d * c, stop), min((d + 1) * c, stop))
-                  for d, c, stop in zip(grid_index, chunk_size, geobox.shape)]
-        geobox_subsets[grid_index] = geobox[slices]
-    return geobox_subsets
-
-
-def _calculate_chunk_sizes(sources, geobox, dask_chunks):
+def _calculate_chunk_sizes(sources: xarray.DataArray,
+                           geobox: GeoBox,
+                           dask_chunks: Dict[str, Union[str, int]]):
     valid_keys = sources.dims + geobox.dimensions
     bad_keys = set(dask_chunks) - set(valid_keys)
     if bad_keys:
         raise KeyError('Unknown dask_chunk dimension {}. Valid dimensions are: {}'.format(bad_keys, valid_keys))
 
-    # If chunk size is not specified, the entire dimension length is used, as in xarray
-    chunks = {dim: size for dim, size in zip(sources.dims, sources.shape)}
-    chunks.update({dim: size for dim, size in zip(geobox.dimensions, geobox.shape)})
+    chunk_maxsz = {dim: sz
+                   for dim, sz in zip(sources.dims + geobox.dimensions,
+                                      sources.shape + geobox.shape)}  # type: Dict[str, int]
 
-    chunks.update(dask_chunks)
+    # defaults: 1 for non-spatial, whole dimension for Y/X
+    chunk_defaults = dict(**{dim: 1 for dim in sources.dims},
+                          **{dim: -1 for dim in geobox.dimensions})   # type: Dict[str, int]
 
-    irr_chunks = tuple(chunks[dim] for dim in sources.dims)
-    grid_chunks = tuple(chunks[dim] for dim in geobox.dimensions)
+    def _resolve(k, v: Optional[Union[str, int]]) -> int:
+        if v is None or v == "auto":
+            v = _resolve(k, chunk_defaults[k])
+
+        if isinstance(v, int):
+            if v < 0:
+                return chunk_maxsz[k]
+            return v
+        raise ValueError("Chunk should be one of int|'auto'")
+
+    irr_chunks = tuple(_resolve(dim, dask_chunks.get(dim)) for dim in sources.dims)
+    grid_chunks = tuple(_resolve(dim, dask_chunks.get(dim)) for dim in geobox.dimensions)
 
     return irr_chunks, grid_chunks
 
@@ -699,37 +746,68 @@ def _tokenize_dataset(dataset):
 
 
 # pylint: disable=too-many-locals
-def _make_dask_array(sources, geobox, measurement,
-                     skip_broken_datasets=False,
-                     dask_chunks=None):
-    dsk_name = 'datacube_load_{name}-{token}'.format(name=measurement['name'], token=uuid.uuid4().hex)
+def _make_dask_array(chunked_srcs,
+                     dsk,
+                     gbt,
+                     measurement,
+                     chunks,
+                     skip_broken_datasets=False):
+    dsk = dsk.copy()  # this contains mapping from dataset id to dataset object
 
-    irr_chunks, grid_chunks = _calculate_chunk_sizes(sources, geobox, dask_chunks)
-    sliced_irr_chunks = (1,) * sources.ndim
+    token = uuid.uuid4().hex
+    dsk_name = 'dc_load_{name}-{token}'.format(name=measurement.name, token=token)
 
-    dsk = {}
-    geobox_subsets = _chunk_geobox(geobox, grid_chunks)
+    needed_irr_chunks, grid_chunks = chunks[:-2], chunks[-2:]
+    actual_irr_chunks = (1,) * len(needed_irr_chunks)
 
-    for irr_index, datasets in numpy.ndenumerate(sources.values):
-        for dataset in datasets:
-            ds_token = _tokenize_dataset(dataset)
-            dsk[ds_token] = dataset
+    # we can have up to 4 empty chunk shapes: whole, right edge, bottom edge and
+    # bottom right corner
+    #  W R
+    #  B BR
+    empties = {}  # type Dict[Tuple[int,int], str]
 
-        for grid_index, subset_geobox in geobox_subsets.items():
-            dataset_keys = [_tokenize_dataset(d) for d in
-                            select_datasets_inside_polygon(datasets, subset_geobox.extent)]
-            dsk[(dsk_name,) + irr_index + grid_index] = (fuse_lazy,
-                                                         dataset_keys, subset_geobox, measurement,
-                                                         skip_broken_datasets,
-                                                         sources.ndim)
+    def _mk_empty(shape: Tuple[int, int]) -> str:
+        name = empties.get(shape, None)
+        if name is not None:
+            return name
+
+        name = 'empty_{}x{}-{token}'.format(*shape, token=token)
+        dsk[name] = (numpy.full, actual_irr_chunks + shape, measurement.nodata, measurement.dtype)
+        empties[shape] = name
+
+        return name
+
+    for irr_index, tiled_dss in numpy.ndenumerate(chunked_srcs.values):
+        key_prefix = (dsk_name, *irr_index)
+
+        # all spatial chunks
+        for idx in numpy.ndindex(gbt.shape):
+            dss = tiled_dss.get(idx, None)
+
+            if dss is None:
+                val = _mk_empty(gbt.chunk_shape(idx))
+            else:
+                val = (fuse_lazy,
+                       [_tokenize_dataset(ds) for ds in dss],
+                       gbt[idx],
+                       measurement,
+                       skip_broken_datasets,
+                       chunked_srcs.ndim)
+
+            dsk[key_prefix + idx] = val
+
+    y_shapes = [grid_chunks[0]]*gbt.shape[0]
+    x_shapes = [grid_chunks[1]]*gbt.shape[1]
+
+    y_shapes[-1], x_shapes[-1] = gbt.chunk_shape(tuple(n-1 for n in gbt.shape))
 
     data = da.Array(dsk, dsk_name,
-                    chunks=(sliced_irr_chunks + grid_chunks),
-                    dtype=measurement['dtype'],
-                    shape=(sources.shape + geobox.shape))
+                    chunks=actual_irr_chunks + (tuple(y_shapes), tuple(x_shapes)),
+                    dtype=measurement.dtype,
+                    shape=(chunked_srcs.shape + gbt.base.shape))
 
-    if irr_chunks != sliced_irr_chunks:
-        data = data.rechunk(chunks=(irr_chunks + grid_chunks))
+    if needed_irr_chunks != actual_irr_chunks:
+        data = data.rechunk(chunks=chunks)
     return data
 
 
