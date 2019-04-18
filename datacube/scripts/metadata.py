@@ -1,25 +1,28 @@
 
 import json
 import logging
+import sys
+import yaml
 from pathlib import Path
 
 import click
-from click import echo
+from click import echo, style
 
 from datacube.index.index import Index
 from datacube.ui import click as ui
 from datacube.ui.click import cli
 from datacube.utils import read_documents, InvalidDocException
+from datacube.utils.serialise import SafeDatacubeDumper
 
 _LOG = logging.getLogger('datacube-md-type')
 
 
-@cli.group(name='metadata_type', help='Metadata type commands')
-def metadata_type():
+@cli.group(name='metadata', help='Metadata type commands')
+def this_group():
     pass
 
 
-@metadata_type.command('add')
+@this_group.command('add')
 @click.option('--allow-exclusive-lock/--forbid-exclusive-lock', is_flag=True, default=False,
               help='Allow index to be locked from other users while updating (default: false)')
 @click.argument('files',
@@ -41,7 +44,7 @@ def add_metadata_types(index, allow_exclusive_lock, files):
             continue
 
 
-@metadata_type.command('update')
+@this_group.command('update')
 @click.option(
     '--allow-unsafe/--forbid-unsafe', is_flag=True, default=False,
     help="Allow unsafe updates (default: false)"
@@ -93,23 +96,47 @@ def update_metadata_types(index, allow_unsafe, allow_exclusive_lock, dry_run, fi
                                                                                  len(safe_changes)))
 
 
-@metadata_type.command('show')
-@click.option('-v', '--verbose', is_flag=True)
-@click.argument('metadata_type_name', nargs=1)
+@this_group.command('show')
+@click.option('-f', 'output_format', help='Output format',
+              type=click.Choice(['yaml', 'json']), default='yaml', show_default=True)
+@click.argument('metadata_type_name', nargs=-1)
 @ui.pass_index()
-def show_metadata_type(index, metadata_type_name, verbose):
+def show_metadata_type(index, metadata_type_name, output_format):
     """
     Show information about a metadata type.
     """
-    metadata_type_obj = index.metadata_types.get_by_name(metadata_type_name)
-    if verbose:
-        echo(json.dumps(metadata_type_obj.definition, indent=4))
+
+    if len(metadata_type_name) == 0:
+        mm = list(index.metadata_types.get_all())
     else:
-        print(metadata_type_obj.description)
-        print('Search fields: %s' % ', '.join(sorted(metadata_type_obj.dataset_fields.keys())))
+        mm = []
+        for name in metadata_type_name:
+            m = index.metadata_types.get_by_name(name)
+            if m is None:
+                echo('No such metadata: {!r}'.format(name), err=True)
+                sys.exit(1)
+            else:
+                mm.append(m)
+
+    if len(mm) == 0:
+        echo('No metadata')
+        sys.exit(1)
+
+    if output_format == 'yaml':
+        yaml.dump_all((m.definition for m in mm),
+                      sys.stdout,
+                      Dumper=SafeDatacubeDumper,
+                      default_flow_style=False,
+                      indent=4)
+    elif output_format == 'json':
+        if len(mm) > 1:
+            echo('Can not output more than 1 metadata document in json format', err=True)
+            sys.exit(1)
+        m = mm[0]
+        echo(json.dumps(m.definition, indent=4))
 
 
-@metadata_type.command('list')
+@this_group.command('list')
 @ui.pass_index()
 def list_metadata_types(index):
     """
@@ -118,8 +145,11 @@ def list_metadata_types(index):
     metadata_types = list(index.metadata_types.get_all())
 
     if not metadata_types:
-        echo('No metadata types found :(')
-        return
+        echo('No metadata types found :(', err=True)
+        sys.exit(1)
 
+    max_w = max(len(m.name) for m in metadata_types)
     for m in metadata_types:
-        echo(m)
+        description_short = m.definition.get('description', '').split('\n')[0]
+        name = '{s:<{n}}'.format(s=m.name, n=max_w)
+        echo(style(name, fg='green') + '  ' + description_short)

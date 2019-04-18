@@ -26,12 +26,17 @@ def write_geotiff(filename, dataset, profile_override=None, time_index=None):
     :param profile_override: option dict, overrides rasterio file creation options.
     :param time_index: DEPRECATED
     """
-    profile_override = profile_override or {}
-
     if time_index is not None:
         raise ValueError('''The write_geotiff function no longer supports passing in `time_index`.
         The same function can be achieved by calling `dataset.isel(time=<time_index>)` before passing
-        in your dataset. It was removed because it made the function much less useful for more advanced cases.''')
+ in your dataset. It was removed because it made the function much less useful for more advanced cases.''')
+
+    profile_override = profile_override or {}
+
+    geobox = getattr(dataset, 'geobox', None)
+
+    if geobox is None:
+        raise ValueError('Can only write datasets with specified `crs` attribute')
 
     try:
         dtypes = {val.dtype for val in dataset.data_vars.values()}
@@ -40,11 +45,13 @@ def write_geotiff(filename, dataset, profile_override=None, time_index=None):
         dtypes = [dataset.dtype]
 
     profile = DEFAULT_PROFILE.copy()
+    height, width = geobox.shape
+
     profile.update({
-        'width': dataset.dims[dataset.crs.dimensions[1]],
-        'height': dataset.dims[dataset.crs.dimensions[0]],
-        'transform': dataset.affine,
-        'crs': dataset.crs.crs_str,
+        'width': width,
+        'height': height,
+        'transform': geobox.affine,
+        'crs': geobox.crs.crs_str,
         'count': len(dataset.data_vars),
         'dtype': str(dtypes.pop())
     })

@@ -2,8 +2,9 @@ from typing import Mapping, Any
 
 from .impl import VirtualProduct, Transformation, VirtualProductException
 from .impl import from_validated_recipe
-from .transformations import MakeMask, ApplyMask, ToFloat, Rename, Select
+from .transformations import MakeMask, ApplyMask, ToFloat, Rename, Select, Formula
 from .transformations import Mean, year, month, week, day
+from .catalog import Catalog
 from .utils import reject_keys
 
 from datacube.model import Measurement
@@ -45,7 +46,7 @@ class NameResolver:
         kind_keys = {key for key in recipe if key in ['product', 'transform', 'collate', 'juxtapose', 'aggregate']}
         if len(kind_keys) < 1:
             raise VirtualProductException("virtual product kind not specified in {}".format(recipe))
-        elif len(kind_keys) > 1:
+        if len(kind_keys) > 1:
             raise VirtualProductException("ambiguous kind in {}".format(recipe))
 
         if 'product' in recipe:
@@ -100,7 +101,8 @@ DEFAULT_RESOLVER = NameResolver({'transform': dict(make_mask=MakeMask,
                                                    apply_mask=ApplyMask,
                                                    to_float=ToFloat,
                                                    rename=Rename,
-                                                   select=Select),
+                                                   select=Select,
+                                                   formula=Formula),
                                  'aggregate': dict(mean=Mean),
                                  'aggregate/group_by': dict(year=year,
                                                             month=month,
@@ -108,15 +110,31 @@ DEFAULT_RESOLVER = NameResolver({'transform': dict(make_mask=MakeMask,
                                                             day=day)})
 
 
-def construct(**recipe: Mapping[str, Any]) -> VirtualProduct:
+def construct(name_resolver=None, **recipe: Mapping[str, Any]) -> VirtualProduct:
     """
     Create a virtual product from a specification dictionary.
     """
+    if name_resolver is None:
+        name_resolver = DEFAULT_RESOLVER
+
     return DEFAULT_RESOLVER.construct(**recipe)
 
 
-def construct_from_yaml(recipe: str) -> VirtualProduct:
+def construct_from_yaml(recipe: str, name_resolver=None) -> VirtualProduct:
     """
     Create a virtual product from a yaml recipe.
     """
+    if name_resolver is None:
+        name_resolver = DEFAULT_RESOLVER
+
     return construct(**parse_yaml(recipe))
+
+
+def catalog_from_yaml(catalog_body: str, name_resolver=None) -> Catalog:
+    """
+    Load a catalog of virtual products from a yaml document.
+    """
+    if name_resolver is None:
+        name_resolver = DEFAULT_RESOLVER
+
+    return Catalog(DEFAULT_RESOLVER, parse_yaml(catalog_body))

@@ -214,10 +214,10 @@ def test_more_check_doc_unchanged():
     # No exception raised
     check_doc_unchanged({'a': 1}, {'a': 1}, 'Letters')
 
-    with pytest.raises(DocumentMismatchError, message='Letters differs from stored (a: 1!=2)'):
+    with pytest.raises(DocumentMismatchError, match='^Letters differs from stored.*a: 1!=2'):
         check_doc_unchanged({'a': 1}, {'a': 2}, 'Letters')
 
-    with pytest.raises(DocumentMismatchError, message='Letters differs from stored (a.b: 1!=2)'):
+    with pytest.raises(DocumentMismatchError, match='^Letters differs from stored.*a.b: 1!=2'):
         check_doc_unchanged({'a': {'b': 1}}, {'a': {'b': 2}}, 'Letters')
 
 
@@ -235,6 +235,26 @@ def test_write_geotiff(tmpdir, odc_style_xr_dataset):
         written_data = src.read(1)
 
         assert (written_data == odc_style_xr_dataset['B10']).all()
+
+
+def test_write_geotiff_str_crs(tmpdir, odc_style_xr_dataset):
+    """Ensure the geotiff helper writer works, and supports crs as a string."""
+    filename = tmpdir + '/test.tif'
+
+    original_crs = odc_style_xr_dataset.crs
+
+    odc_style_xr_dataset.attrs['crs'] = str(original_crs)
+    write_geotiff(filename, odc_style_xr_dataset)
+    assert filename.exists()
+
+    with rasterio.open(str(filename)) as src:
+        written_data = src.read(1)
+
+        assert (written_data == odc_style_xr_dataset['B10']).all()
+
+    del odc_style_xr_dataset.attrs['crs']
+    with pytest.raises(ValueError):
+        write_geotiff(filename, odc_style_xr_dataset)
 
 
 def test_write_geotiff_time_index_deprecated():
