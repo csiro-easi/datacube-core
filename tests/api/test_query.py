@@ -10,19 +10,16 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-
-
-from __future__ import absolute_import, division, print_function
-
 import datetime
+import pandas
+import numpy as np
+from types import SimpleNamespace
 
 import pytest
-from dateutil import tz
 
-from ..util import isclose
-
-from datacube.api.query import Query, _datetime_to_timestamp, query_group_by
+from datacube.api.query import Query, _datetime_to_timestamp, query_group_by, solar_day, GroupBy
 from datacube.model import Range
+from datacube.utils import parse_time
 
 
 def test_datetime_to_timestamp():
@@ -86,3 +83,86 @@ def test_query_kwargs():
 
     with pytest.raises(LookupError):
         query_group_by(group_by='magic')
+
+    gb = query_group_by('time')
+    assert isinstance(gb, GroupBy)
+    assert query_group_by(group_by=gb) is gb
+
+
+def format_test(start_out, end_out):
+    return Range(pandas.to_datetime(start_out, utc=True).to_pydatetime(),
+                 pandas.to_datetime(end_out, utc=True).to_pydatetime())
+
+
+testdata = [
+    ((datetime.datetime(2008, 1, 1), datetime.datetime(2008, 1, 10)),
+     format_test('2008-01-01T00:00:00', '2008-01-10T00:00:00.999999')),
+    ((datetime.datetime(2008, 1, 1), datetime.datetime(2008, 1, 10, 23, 0, 0)),
+     format_test('2008-01-01T00:00:00', '2008-01-10T23:00:00.999999')),
+    ((datetime.datetime(2008, 1, 1), datetime.datetime(2008, 1, 10, 23, 59, 40)),
+     format_test('2008-01-01T00:00:00', '2008-01-10T23:59:40.999999')),
+    (('2008'),
+     format_test('2008-01-01T00:00:00', '2008-12-31T23:59:59.999999')),
+    (('2008', '2008'),
+     format_test('2008-01-01T00:00:00', '2008-12-31T23:59:59.999999')),
+    (('2008', '2009'),
+     format_test('2008-01-01T00:00:00', '2009-12-31T23:59:59.999999')),
+    (('2008-03', '2009'),
+     format_test('2008-03-01T00:00', '2009-12-31T23:59:59.999999')),
+    (('2008-03', '2009-10'),
+     format_test('2008-03-01T00:00', '2009-10-31T23:59:59.999999')),
+    (('2008', '2009-10'),
+     format_test('2008-01-01T00:00', '2009-10-31T23:59:59.999999')),
+    (('2008-03-03', '2008-11'),
+     format_test('2008-03-03T00:00:00', '2008-11-30T23:59:59.999999')),
+    (('2008-11-14', '2008-11-30'),
+     format_test('2008-11-14T00:00:00', '2008-11-30T23:59:59.999999')),
+    (('2008-11-14', '2008-11-29'),
+     format_test('2008-11-14T00:00:00', '2008-11-29T23:59:59.999999')),
+    (('2008-11-14', '2008-11'),
+     format_test('2008-11-14T00:00:00', '2008-11-30T23:59:59.999999')),
+    (('2008-11-14', '2008'),
+     format_test('2008-11-14T00:00:00', '2008-12-31T23:59:59.999999')),
+    (('2008-11-14'),
+     format_test('2008-11-14T00:00:00', '2008-11-14T23:59:59.999999')),
+    (('2008-11-14', '2009-02-02'),
+     format_test('2008-11-14T00:00:00', '2009-02-02T23:59:59.999999')),
+    (('2008-11-14T23:33:57', '2008-11-14 23:33:57'),
+     format_test('2008-11-14T23:33:57', '2008-11-14T23:33:57.999999')),
+    (('2008-11-14 23:33', '2008-11-14 23:34'),
+     format_test('2008-11-14T23:33:00', '2008-11-14T23:34:59.999999')),
+    (('2008-11-14T23:00:00', '2008-11-14 23:35'),
+     format_test('2008-11-14T23:00', '2008-11-14T23:35:59.999999')),
+    (('2008-11-10T11', '2008-11-16 14:01'),
+     format_test('2008-11-10T11:00', '2008-11-16T14:01:59.999999')),
+    ((datetime.date(1995, 1, 1), datetime.date(1999, 1, 1)),
+     format_test('1995-01-01T00:00:00', '1999-01-01T23:59:59.999999')),
+    ((datetime.datetime(2008, 1, 1), datetime.date(2008, 1, 4), datetime.datetime(2008, 1, 10, 23, 59, 40)),
+     format_test('2008-01-01T00:00:00', '2008-01-10T23:59:40.999999')),
+    ((datetime.date(2008, 1, 1)),
+     format_test('2008-01-01T00:00:00', '2008-01-01T23:59:59.999999'))
+]
+
+
+@pytest.mark.parametrize('time_param,expected', testdata)
+def test_time_handling(time_param, expected):
+    query = Query(time=time_param)
+    assert 'time' in query.search_terms
+    assert query.search_terms['time'] == expected
+
+
+def test_solar_day():
+    _s = SimpleNamespace
+    ds = _s(center_time=parse_time('1987-05-22 23:07:44.2270250Z'),
+            metadata=_s(lon=Range(begin=150.415,
+                                  end=152.975)))
+
+    assert solar_day(ds) == np.datetime64('1987-05-23', 'D')
+    assert solar_day(ds, longitude=0) == np.datetime64('1987-05-22', 'D')
+
+    ds.metadata = _s()
+
+    with pytest.raises(ValueError) as e:
+        solar_day(ds)
+
+    assert 'Cannot compute solar_day: dataset is missing spatial info' in str(e.value)

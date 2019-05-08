@@ -4,8 +4,6 @@ CAUTION: The database with the last possible index (typically 15) in the store i
 contains any data, that gets wiped out!
 '''
 
-from __future__ import absolute_import
-
 import logging
 from time import sleep
 from copy import deepcopy
@@ -68,10 +66,13 @@ def input_data():
 
 @pytest.fixture(scope='session')
 def ee_celery(ee_config):
+    pass
+    '''
     process = launch_ae_worker(ee_config)
     yield
     print('Teardown celery')
     process.terminate()
+    '''
 
 
 def run_python_function_base_direct(self, *args, **kargs):
@@ -79,7 +80,7 @@ def run_python_function_base_direct(self, *args, **kargs):
     return run_python_function_base(*args, **kargs)
 
 
-def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback, **params):
+def _submit(test_name, tmpdir, store_handler, local_config, base_function, test_callback, **params):
     '''Submits a user function and runs a callback test function.
 
     This cleans the store before and after.
@@ -88,11 +89,6 @@ def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base
     logger.debug('{sep} Starting {} {sep}'.format(test_name, sep='='*20))
 
     client = AnalyticsClient(local_config)
-
-    # Override celery calls with direct calls, useful to get proper
-    # test coverage estimates
-    if not celery_enabled:
-        client._run_python_function_base = run_python_function_base_direct.__get__(client, AnalyticsClient)
 
     logger.debug(client)
     jro = client.submit_python_function(base_function, walltime='00:01:25', paths=local_config.files_loaded,
@@ -120,7 +116,7 @@ def _submit(test_name, tmpdir, store_handler, local_config, celery_enabled, base
     logger.debug('{sep} Completed {} {sep}'.format(test_name, sep='='*20))
 
 
-def check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, input_data):
+def check_submit_user_data(tmpdir, store_handler, local_config, input_data):
     '''Check retrieval of user data created by user function as files.'''
     filename = 'my_result.txt'
     text = 'This is an auxillary output file with some text'
@@ -161,12 +157,12 @@ def check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, 
                         with urlopen(url) as fh:
                             assert fh.read().decode('utf-8') == text
 
-    _submit('check_submit_user_data', tmpdir, store_handler, local_config, celery_enabled,
+    _submit('check_submit_user_data', tmpdir, store_handler, local_config,
             base_function, test_callback,
             function_params=function_params, data=input_data)
 
 
-def check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, chunk=None):
+def check_submit_job(tmpdir, store_handler, local_config, index, input_data, chunk=None):
     '''Test basic aspects of job submission.
 
     It checks the store data and also retrieves and checks the data through the JRO. The default
@@ -229,11 +225,11 @@ def check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index,
         np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
 
     _submit('check_submit_job with chunk={}'.format(chunk),
-            tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
+            tmpdir, store_handler, local_config, base_function, test_callback,
             data=data)
 
 
-def check_do_the_math(tmpdir, store_handler, local_config, celery_enabled, index, input_data):
+def check_do_the_math(tmpdir, store_handler, local_config, index, input_data):
     '''Test basic band maths.'''
     # TODO: This kind of function not yet supported:
     # import xarray as xr
@@ -267,11 +263,11 @@ def check_do_the_math(tmpdir, store_handler, local_config, celery_enabled, index
         np.testing.assert_array_equal(returned_calc.time, data_array.red.time)
 
     _submit('check_do_the_math',
-            tmpdir, store_handler, local_config, celery_enabled, band_transform, test_callback,
+            tmpdir, store_handler, local_config, band_transform, test_callback,
             data=input_data)
 
 
-def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data):
+def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data):
     '''Test for failure if both data and user_tasks are specified for a job.'''
     def base_function(data, dc=None, function_params=None, user_data=None):
         return data['query_1']
@@ -289,11 +285,11 @@ def check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config
     # Cannot specify data and user_task at the same time
     with pytest.raises(ValueError):
         _submit('check_submit_invalid_data_and_user_tasks',
-                tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
+                tmpdir, store_handler, local_config, base_function, test_callback,
                 data=input_data, user_tasks=user_tasks)
 
 
-def check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled):
+def check_submit_job_user_tasks(tmpdir, store_handler, local_config):
     '''Test submission of function with user_tasks instead of data.'''
     def base_function(data, dc=None, function_params=None, user_task=None):
         from pathlib import Path
@@ -361,7 +357,7 @@ def check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enab
             assert extents[feature_no] == expected_extent
 
     _submit('check_submit_job_user_tasks',
-            tmpdir, store_handler, local_config, celery_enabled, base_function, test_callback,
+            tmpdir, store_handler, local_config, base_function, test_callback,
             function_params=function_params, user_tasks=user_tasks)
 
 

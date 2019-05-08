@@ -1,7 +1,5 @@
 '''Unit tests for the analytics client.'''
 
-from __future__ import absolute_import
-
 import logging
 import pytest
 from datacube.engine_common.rpc_celery import celery_app, app
@@ -18,23 +16,24 @@ redis = pytest.importorskip('redis')
 def test_invalid_item_id(local_config):
     '''Ensure invalid input raises exceptions.'''
     client = AnalyticsClient(local_config)
+    print(local_config._env)
     # Invalid result ID
     with pytest.raises(ValueError):
-        client.get_result('Invalid')
+        client.get_result('Invalid', paths=local_config.files_loaded, env=local_config._env)
 
     # Invalid status for Job
     job = Job(None, {'id': 'Invalid', 'request_id': 'Invalid'})
     with pytest.raises(ValueError):
-        client.get_status(job)
+        client.get_status(job, paths=local_config.files_loaded, env=local_config._env)
 
     # Invalid status for Results
     results = Results(None, {'id': 'Invalid', 'request_id': 'Invalid', 'results': {}})
     with pytest.raises(ValueError):
-        client.get_status(results)
+        client.get_status(results, paths=local_config.files_loaded, env=local_config._env)
 
     # Invalid status for unknown item type
     with pytest.raises(ValueError):
-        client.get_status(None)
+        client.get_status(None, paths=local_config.files_loaded, env=local_config._env)
 
 
 @pytest.mark.usefixtures('default_metadata_type')

@@ -1,5 +1,3 @@
-from __future__ import absolute_import, print_function
-
 import logging
 import time
 from math import ceil
@@ -178,7 +176,7 @@ class AnalyticsEngineV2(Worker):
             _, indices, chunk_ids = S3LIO.create_indices(total_shape, storage_params['chunk'], '^_^')
             decomposed_item = {}
             decomposed_item['query'] = deepcopy(query)
-            decomposed_item['metadata'] = metadata
+            decomposed_item['metadata'] = dumps(metadata)
             decomposed_item['indices'] = indices
             decomposed_item['chunk_ids'] = chunk_ids
             decomposed_item['total_shape'] = total_shape

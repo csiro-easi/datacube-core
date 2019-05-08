@@ -1,31 +1,52 @@
-#
-#    Licensed under the Apache License, Version 2.0 (the "License");
-#    you may not use this file except in compliance with the License.
-#    You may obtain a copy of the License at
-#
-#        http://www.apache.org/licenses/LICENSE-2.0
-#
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS,
-#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#    See the License for the specific language governing permissions and
-#    limitations under the License.
+"""
+This module defines a simple query language for searching Data Cube indexes
+
+Literal Values
+--------------
+
+- Strings
+- Numerics
+- Dates
+- Vague Dates
+
+ie. Specify a year, meaning a range covering the entire year
+
+Comparisons
+-----------
+
+- Equals
+
+    eg.  field=<value>
+
+- Between
+
+    eg.
+
+      - low < field < high
+      - high > field > low
+      - field in range(low, high)
+
+API
+---
+
+This module exposes a single function :func:`parse_expression` which takes
+a list of string expressions, and returns a dictionary of expressions to
+pass to the index search API.
 
 """
-Data Access Module
-"""
-from __future__ import absolute_import, print_function, division
 
 import calendar
 import re
 from datetime import datetime
+import warnings
 
 from dateutil import tz
 from pypeg2 import word, attr, List, maybe_some, parse as peg_parse
 
 from datacube.model import Range
+from datacube.api.query import _time_to_search_dims
 
-FIELD_NAME = attr(u'field_name', word)
+FIELD_NAME = attr('field_name', word)
 
 NUMBER = re.compile(r"[-+]?(\d*\.\d+|\d+\.\d*|\d+)")
 # A limited string can be used without quotation marks.
@@ -59,10 +80,10 @@ class StringValue(Expr):
         self.value = value
 
     grammar = [
-        attr(u'value', URI_CONTENTS),
-        attr(u'value', LIMITED_STRING),
-        (u'"', attr(u'value', URI_CONTENTS_WITH_SPACE), u'"'),
-        (u'"', attr(u'value', STRING_CONTENTS), u'"'),
+        attr('value', URI_CONTENTS),
+        attr('value', LIMITED_STRING),
+        ('"', attr('value', URI_CONTENTS_WITH_SPACE), '"'),
+        ('"', attr('value', STRING_CONTENTS), '"'),
     ]
 
     def __str__(self):
@@ -82,7 +103,7 @@ class NumericValue(Expr):
     def __init__(self, value=None):
         self.value = value
 
-    grammar = attr(u'value', NUMBER)
+    grammar = attr('value', NUMBER)
 
     def __str__(self):
         return self.value
@@ -101,7 +122,7 @@ class DateValue(Expr):
     def __init__(self, value=None):
         self.value = value
 
-    grammar = attr(u'value', DATE)
+    grammar = attr('value', DATE)
 
     def __str__(self):
         return self.value
@@ -138,7 +159,7 @@ class VagueDateValue(Expr):
     def __init__(self, value=None):
         self.value = value
 
-    grammar = attr(u'value', VAGUE_DATE)
+    grammar = attr('value', VAGUE_DATE)
 
     def __str__(self):
         return self.value
@@ -187,7 +208,7 @@ class InExpression(Expr):
         self.year = year
 
     grammar = [
-        (FIELD_NAME, u'in', attr(u'value', [VagueDateValue]))
+        (FIELD_NAME, 'in', attr('value', [VagueDateValue]))
     ]
 
     def __str__(self):
@@ -205,7 +226,7 @@ class EqualsExpression(Expr):
         self.field_name = field_name
         self.value = value
 
-    grammar = FIELD_NAME, u'=', attr(u'value', [DateValue, NumericValue, StringValue])
+    grammar = FIELD_NAME, '=', attr('value', [DateValue, NumericValue, StringValue])
 
     def __str__(self):
         return '{} = {!r}'.format(self.field_name, self.value)
@@ -217,7 +238,7 @@ class EqualsExpression(Expr):
         return {self.field_name: self.value.as_value()}
 
 
-class BetweenExpression(Expr):
+class OldBetweenExpression(Expr):
     def __init__(self, field_name=None, low_value=None, high_value=None):
         self.field_name = field_name
         self.low_value = low_value
@@ -226,14 +247,14 @@ class BetweenExpression(Expr):
     range_values = [DateValue, NumericValue]
     grammar = [
         # low < field < high
-        (attr(u'low_value', range_values), u'<', FIELD_NAME, u'<', attr(u'high_value', range_values)),
+        (attr('low_value', range_values), '<', FIELD_NAME, '<', attr('high_value', range_values)),
         # high > field > low
-        (attr(u'high_value', range_values), u'>', FIELD_NAME, u'>', attr(u'low_value', range_values)),
+        (attr('high_value', range_values), '>', FIELD_NAME, '>', attr('low_value', range_values)),
         # field in range(low, high)
-        (FIELD_NAME, u'in', u'range',
-         u'(',
-         attr(u'low_value', range_values), u',', attr(u'high_value', range_values),
-         u')'),
+        (FIELD_NAME, 'in', 'range',
+         '(',
+         attr('low_value', range_values), ',', attr('high_value', range_values),
+         ')'),
     ]
 
     def __str__(self):
@@ -246,11 +267,39 @@ class BetweenExpression(Expr):
         )
 
     def as_query(self):
+        warnings.warn("old-style between expressions are deprecated, use 'field in [start, end]' syntax instead",
+                      DeprecationWarning)
         return {self.field_name: Range(self.low_value.as_value(), self.high_value.as_value())}
 
 
+class BetweenExpression(Expr):
+    def __init__(self, field_name=None, low_value=None, high_value=None):
+        self.field_name = field_name
+        self.low_value = low_value
+        self.high_value = high_value
+
+    range_values = [DateValue, NumericValue]
+    grammar = [
+        # field in [low, high]
+        (FIELD_NAME, 'in',
+         '[',
+         attr('low_value', range_values), ',', attr('high_value', range_values),
+         ']'),
+    ]
+
+    def __str__(self):
+        return '{} in [{!r}, {!r}]'.format(self.field_name, self.low_value, self.high_value)
+
+    def query_repr(self, get_field):
+        search_range = self.as_query()[self.field_name]
+        return get_field(self.field_name).between(search_range.begin, search_range.end)
+
+    def as_query(self):
+        return {self.field_name: _time_to_search_dims([self.low_value.value, self.high_value.value])}
+
+
 class ExpressionList(List):
-    grammar = maybe_some([EqualsExpression, BetweenExpression, InExpression])
+    grammar = maybe_some([EqualsExpression, BetweenExpression, OldBetweenExpression, InExpression])
 
     def __str__(self):
         return ' and '.join(map(str, self))

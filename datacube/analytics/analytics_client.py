@@ -1,8 +1,6 @@
 '''The analytics client module lets end-users interact with the analytics/execution engine,
 submitting jobs in a cluster and receiving job result objects in return.'''
 
-from __future__ import absolute_import
-
 import logging
 from time import monotonic, sleep
 from pathlib import Path

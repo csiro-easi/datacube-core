@@ -1,8 +1,6 @@
 '''Base class for the analytics and execution workers. It manages basic worker data and methods to
 handle job and result lifecycle in the store.'''
 
-from __future__ import absolute_import, print_function
-
 from time import time
 import logging
 from pathlib import Path

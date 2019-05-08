@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-
 import imp
 import shutil
 from pathlib import Path
@@ -9,36 +7,28 @@ import numpy
 import pytest
 import rasterio
 
-from datacube.compat import string_types
 from integration_tests.analytics_execution_engine.test_analytics_engine2 import \
         check_submit_job, check_do_the_math, check_submit_user_data, \
         check_submit_job_user_tasks, check_submit_invalid_data_and_user_tasks, \
         store_handler, input_data, ee_celery
-from integration_tests.utils import assert_click_command
-from integration_tests.conftest import prepare_test_ingestion_configuration
+from datacube.api.query import query_group_by
+from integration_tests.utils import assert_click_command, prepare_test_ingestion_configuration
+
 
 PROJECT_ROOT = Path(__file__).parents[1]
 CONFIG_SAMPLES = PROJECT_ROOT / 'docs/config_samples/'
+INGESTER_CONFIGS = CONFIG_SAMPLES / 'ingester'
 LS5_DATASET_TYPES = CONFIG_SAMPLES / 'dataset_types/ls5_scenes.yaml'
 TEST_DATA = PROJECT_ROOT / 'tests' / 'data' / 'lbg'
-
-INGESTER_CONFIGS = CONFIG_SAMPLES / 'ingester'
-
-LS5_NBAR_ALBERS = 'ls5_nbar_albers.yaml'
-LS5_PQ_ALBERS = 'ls5_pq_albers.yaml'
-
-GA_LS_PREPARE_SCRIPT = PROJECT_ROOT / 'utils/galsprepare.py'
-
-galsprepare = imp.load_source('module.name', str(GA_LS_PREPARE_SCRIPT))
-
 LBG_NBAR = 'LS5_TM_NBAR_P54_GANBAR01-002_090_084_19920323'
 LBG_PQ = 'LS5_TM_PQ_P55_GAPQ01-002_090_084_19920323'
+LBG_CELL = (15, -40)  # x,y
 
-ALBERS_ELEMENT_SIZE = 25
+galsprepare = imp.load_source('module.name', str(PROJECT_ROOT / 'utils/galsprepare.py'))
 
-LBG_CELL_X = 15
-LBG_CELL_Y = -40
-LBG_CELL = (LBG_CELL_X, LBG_CELL_Y)
+
+def custom_dumb_fuser(dst, src):
+    dst[:] = src[:]
 
 
 @pytest.fixture()
@@ -83,8 +73,35 @@ def test_s3_end_to_end(tmpdir, clirunner, index, testdata_dir, ingest_configs, s
     clirunner(['-v', 'product', 'add', str(LS5_DATASET_TYPES)])
 
     # Index the Datasets
-    clirunner(['-v', 'dataset', 'add', '--auto-match',
+    #  - do test run first to increase test coverage
+    clirunner(['-v', 'dataset', 'add', '--dry-run',
                str(lbg_nbar), str(lbg_pq)])
+
+    #  - do actual indexing
+    clirunner(['-v', 'dataset', 'add',
+               str(lbg_nbar), str(lbg_pq)])
+
+    #  - this will be no-op but with ignore lineage
+    clirunner(['-v', 'dataset', 'add',
+               '--confirm-ignore-lineage',
+               str(lbg_nbar), str(lbg_pq)])
+
+    # Test no-op update
+    for policy in ['archive', 'forget', 'keep']:
+        clirunner(['-v', 'dataset', 'update',
+                   '--dry-run',
+                   '--location-policy', policy,
+                   str(lbg_nbar), str(lbg_pq)])
+
+        # Test no changes needed update
+        clirunner(['-v', 'dataset', 'update',
+                   '--location-policy', policy,
+                   str(lbg_nbar), str(lbg_pq)])
+
+    # TODO: test location update
+    # 1. Make a copy of a file
+    # 2. Call dataset update with archive/forget
+    # 3. Check location
 
     # Ingest NBAR
     clirunner(['-v', 'ingest', '-c', str(ls5_nbar_albers_ingest_config)])
@@ -98,16 +115,11 @@ def test_s3_end_to_end(tmpdir, clirunner, index, testdata_dir, ingest_configs, s
 
     # AE/EE
     # Test single chunk
-    celery_enabled = True
-    check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, (1, 231, 420))
+    check_submit_job(tmpdir, store_handler, local_config, index, input_data, (1, 231, 420))
     # Test multiple chunks (default chunk is defined in `input_data`)
-    check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data)
-    check_do_the_math(tmpdir, store_handler, local_config, celery_enabled, index, input_data)
-    check_submit_user_data(tmpdir, store_handler, local_config, celery_enabled, input_data)
-
-    # Test single chunk but with direct calls instead of celery, to test coverage
-    # celery_enabled = False
-    # check_submit_job(tmpdir, store_handler, local_config, celery_enabled, index, input_data, (1, 231, 420))
+    check_submit_job(tmpdir, store_handler, local_config, index, input_data)
+    check_do_the_math(tmpdir, store_handler, local_config, index, input_data)
+    check_submit_user_data(tmpdir, store_handler, local_config, input_data)
 
 
 @pytest.mark.usefixtures('default_metadata_type')
@@ -123,14 +135,8 @@ def test_s3_user_tasks(tmpdir, clirunner, index, testdata_dir, ingest_configs, s
     The input dataset should be recorded in the index, and two sets of storage units
     should be created on disk and recorded in the index.
     """
-    celery_enabled = True
-    check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled)
-    check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data)
-
-    # Run these tests again with direct calls instead of celery to test coverage
-    # celery_enabled = False
-    # check_submit_job_user_tasks(tmpdir, store_handler, local_config, celery_enabled)
-    # check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, celery_enabled, input_data)
+    check_submit_job_user_tasks(tmpdir, store_handler, local_config)
+    check_submit_invalid_data_and_user_tasks(tmpdir, store_handler, local_config, input_data)
 
 
 def check_datacube_save(index, tmpdir, datacube_env_name):
@@ -147,7 +153,7 @@ def check_datacube_save(index, tmpdir, datacube_env_name):
     metadata = dc.metadata_for_load(**data)
     chunk = (slice(0, 1, None), slice(0, 4, None), slice(0, 4, None))
     data_array = dc.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
-                              metadata['measurements_values'].values())
+                              metadata['measurements_dicts'])
 
     ds = DatacubeSave(dc)
 
@@ -164,7 +170,7 @@ def check_datacube_save(index, tmpdir, datacube_env_name):
         metadata2 = dc.metadata_for_load(**data2)
         chunk2 = (slice(0, 2, None), slice(0, 4, None), slice(0, 4, None))
         data_array2 = dc.load_data(metadata2['grouped'][chunk2[0]], metadata2['geobox'][chunk2[1:]],
-                                   metadata2['measurements_values'].values())
+                                   metadata2['measurements_dicts'])
 
         assert (data_array.blue == data_array2.blue).all()
         assert (data_array.red == data_array2.red).all()
@@ -181,17 +187,20 @@ def check_datacube_save(index, tmpdir, datacube_env_name):
     metadata3 = dc.metadata_for_load(**data3)
     chunk3 = (slice(0, 2, None), slice(0, 4, None), slice(0, 4, None))
     data_array3 = dc.load_data(metadata3['grouped'][chunk3[0]], metadata3['geobox'][chunk3[1:]],
-                               metadata3['measurements_values'].values())
+                               metadata3['measurements_dicts'])
 
     assert (data_array.blue == data_array3.blue).all()
     assert (data_array.red == data_array3.red).all()
+
+    if datacube_env_name == "s3aio_env":
+        check_legacy_open(index)
 
 
 def check_open_with_dc(index):
     from datacube.api.core import Datacube
     dc = Datacube(index=index)
 
-    data_array = dc.load(product='ls5_nbar_albers', measurements=['blue'], stack='variable')
+    data_array = dc.load(product='ls5_nbar_albers', measurements=['blue']).to_array(dim='variable')
     assert data_array.shape
     assert (data_array != -999).any()
 
@@ -203,20 +212,22 @@ def check_open_with_dc(index):
     assert data_array['blue'].shape[1:] == (1, 1)
     assert (data_array.blue != -999).any()
 
-    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35, -36), longitude=(149, 150), stack='variable')
+    data_array = dc.load(product='ls5_nbar_albers', latitude=(-35, -36), longitude=(149, 150)).to_array(dim='variable')
+
     assert data_array.ndim == 4
     assert 'variable' in data_array.dims
     assert (data_array != -999).any()
 
     with rasterio.Env():
         lazy_data_array = dc.load(product='ls5_nbar_albers', latitude=(-35, -36), longitude=(149, 150),
-                                  stack='variable', dask_chunks={'time': 1, 'x': 1000, 'y': 1000})
+                                  dask_chunks={'time': 1, 'x': 1000, 'y': 1000}).to_array(dim='variable')
         assert lazy_data_array.data.dask
         assert lazy_data_array.ndim == data_array.ndim
         assert 'variable' in lazy_data_array.dims
         assert lazy_data_array[1, :2, 950:1050, 950:1050].equals(data_array[1, :2, 950:1050, 950:1050])
 
-    dataset = dc.load(product='ls5_nbar_albers', measurements=['blue'])
+    dataset = dc.load(product='ls5_nbar_albers', measurements=['blue'],
+                      fuse_func=custom_dumb_fuser)
     assert dataset['blue'].size
 
     dataset = dc.load(product='ls5_nbar_albers', latitude=(-35.2, -35.3), longitude=(149.1, 149.2))
@@ -314,3 +325,34 @@ def check_open_with_grid_workflow(index):
 
     dataset_cell = gw.load(tile)
     assert all(m in dataset_cell for m in ['blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
+
+
+def check_legacy_open(index):
+    from datacube.api.core import Datacube
+    dc = Datacube(index=index)
+
+    data_array = dc.load(product='ls5_nbar_albers',
+                         measurements=['blue'],
+                         time='1992-03-23T23:14:25.500000',
+                         use_threads=True)
+    assert data_array['blue'].shape[0] == 1
+    assert (data_array.blue != -999).any()
+
+    # force fusing load by duplicating dataset
+    dss = dc.find_datasets(product='ls5_nbar_albers',
+                           time='1992-03-23T23:14:25.500000')
+
+    assert len(dss) == 1
+
+    dss = dss*2
+    sources = dc.group_datasets(dss, query_group_by('time'))
+
+    gbox = data_array.geobox
+    mm = [dss[0].type.measurements['blue']]
+    xx = dc.load_data(sources, gbox, mm)
+    assert (xx == data_array).all()
+
+    with rasterio.Env():
+        xx_lazy = dc.load_data(sources, gbox, mm, dask_chunks={'time': 1})
+        assert xx_lazy['blue'].data.dask
+        assert xx_lazy.blue[0, :, :].equals(xx.blue[0, :, :])

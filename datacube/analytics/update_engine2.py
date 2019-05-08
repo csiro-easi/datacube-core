@@ -1,8 +1,6 @@
 '''The update engine responds to queries from client regarding the status or value of existing job
 and results. It is typically used by the JRO to update itself.
 '''
-from __future__ import absolute_import, print_function
-
 import logging
 from enum import Enum
 from redis.exceptions import TimeoutError

@@ -9,21 +9,19 @@
 """
 Postgres connection and setup
 """
-from __future__ import absolute_import
-
 import json
 import logging
 import os
 import re
 from time import sleep
 from contextlib import contextmanager
+from typing import Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.engine.url import URL as EngineUrl
 
 import datacube
-from datacube.compat import string_types
 from datacube.index.exceptions import IndexSetupError
 from datacube.utils import jsonify_document
 from . import _api
@@ -36,9 +34,9 @@ _LOG = logging.getLogger(__name__)
 try:
     import pwd
 
-    DEFAULT_DB_USER = pwd.getpwuid(os.geteuid()).pw_name
-except ImportError:
-    # No default on Windows
+    DEFAULT_DB_USER = pwd.getpwuid(os.geteuid()).pw_name  # type: Optional[str]
+except (ImportError, KeyError):
+    # No default on Windows and some other systems
     DEFAULT_DB_USER = None
 DEFAULT_DB_PORT = 5432
 
@@ -141,8 +139,7 @@ class PostgresDb(object):
         )
 
     @property
-    def url(self):
-        # type: () -> URL
+    def url(self) -> str:
         return self._engine.url
 
     @staticmethod
@@ -185,7 +182,7 @@ class PostgresDb(object):
         """
         full_name = _LIB_ID
         if application_name:
-            if not isinstance(application_name, string_types):
+            if not isinstance(application_name, str):
                 raise TypeError('Application name must be a string')
 
             full_name = re.sub('[^0-9a-zA-Z]+', '-', application_name) + ' ' + full_name
@@ -271,8 +268,9 @@ class PostgresDb(object):
         # Exceeded max retries
         raise RuntimeError('PostgresDb.give_me_a_connection', 'exceeded max retries', last_error)
 
-    def get_dataset_fields(self, search_fields_definition):
-        return _api.get_dataset_fields(search_fields_definition)
+    @classmethod
+    def get_dataset_fields(cls, metadata_type_definition):
+        return _api.get_dataset_fields(metadata_type_definition)
 
     def __repr__(self):
         return "PostgresDb<engine={!r}>".format(self._engine)

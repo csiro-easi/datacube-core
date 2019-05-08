@@ -2,8 +2,6 @@
 """
 Common functions for click-based cli scripts.
 """
-from __future__ import absolute_import
-
 import functools
 import logging
 import os
@@ -77,8 +75,6 @@ class ClickHandler(logging.Handler):
         try:
             msg = self.format(record)
             click.echo(msg, err=True)
-        except (KeyboardInterrupt, SystemExit):
-            raise
         except:  # pylint: disable=bare-except
             self.handleError(record)
 
@@ -127,7 +123,7 @@ def _log_queries(ctx, param, value):
 def _set_config(ctx, param, value):
     if value:
         if not any(os.path.exists(p) for p in value):
-            raise ValueError('No specified config paths exist: {}' % value)
+            raise ValueError('No specified config paths exist: {}'.format(value))
 
         if not ctx.obj:
             ctx.obj = {}
@@ -207,7 +203,7 @@ def pass_index(app_name=None, expect_initialised=True):
 
     def decorate(f):
         @pass_config
-        def with_index(local_config,  # type: LocalConfig
+        def with_index(local_config: config.LocalConfig,
                        *args,
                        **kwargs):
             ctx = click.get_current_context()
@@ -270,7 +266,7 @@ def _setup_executor(ctx, param, value):
         ctx.fail("Failed to create '%s' executor with '%s'" % value)
 
 
-executor_cli_options = click.option('--executor',
+executor_cli_options = click.option('--executor',  # type: ignore
                                     type=(click.Choice(list(EXECUTOR_TYPES)), str),
                                     default=('serial', None),
                                     help="Run parallelized, either locally or distributed. eg:\n"
@@ -342,9 +338,11 @@ def parsed_search_expressions(f):
     the shell will try to interpret them.
 
     \b
-    eg. '1996-01-01 < time < 1996-12-31'
-        '130<lon<140' '-30 > lat > -40'
+    eg. 'time in [1996-01-01, 1996-12-31]'
+        'lon in [130, 140]' 'lat in [-40, -30]'
         product=ls5_nbar_albers
+
+    or (deprecated) '1996-01-01 < time < 1996-12-31'
     """
 
     def my_parse(ctx, param, value):

@@ -1,8 +1,6 @@
 '''Manager for the remote procedure calls (RPC) used by the Analytics
 engine.'''
 
-from __future__ import absolute_import, print_function
-
 from pkg_resources import iter_entry_points, DistributionNotFound
 
 

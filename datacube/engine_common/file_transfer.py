@@ -1,5 +1,3 @@
-from __future__ import absolute_import, print_function, division
-
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp, gettempdir

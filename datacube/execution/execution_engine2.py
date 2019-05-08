@@ -1,5 +1,3 @@
-from __future__ import absolute_import, print_function
-
 from os import makedirs, walk
 from sys import version_info
 from xarray import Dataset, DataArray
@@ -60,10 +58,18 @@ class ExecutionEngineV2(Worker):
         use_threads = isinstance(self._datacube.index, S3AIOIndex)
         if chunk is None:
             return Datacube.load_data(metadata['grouped'], metadata['geobox'],
-                                      metadata['measurements_values'].values(), use_threads=use_threads)
+                                      metadata['measurements_dicts'],
+                                      resampling=None,
+                                      fuse_func=None,
+                                      dask_chunks=None,
+                                      use_threads=use_threads)
         else:
             return Datacube.load_data(metadata['grouped'][chunk[0]], metadata['geobox'][chunk[1:]],
-                                      metadata['measurements_values'].values(), use_threads=use_threads)
+                                      metadata['measurements_dicts'],
+                                      resampling=None,
+                                      fuse_func=None,
+                                      dask_chunks=None,
+                                      use_threads=use_threads)
 
     def _compute_result(self, function, data, function_params=None, user_task=None):
         '''Run the function on the data.'''
@@ -139,7 +145,7 @@ class ExecutionEngineV2(Worker):
         self.pre_process(job)
 
         # Prepare data, if any was passed
-        data_dict = {name: self._get_data(job_data['metadata'], job['slice'])
+        data_dict = {name: self._get_data(loads(job_data['metadata']), job['slice'])
                      for name, job_data in job['data'].items()} \
                          if job['data'] else {}
 

@@ -15,18 +15,18 @@
 Storage Query and Access API module
 """
 
-from __future__ import absolute_import, division, print_function
 
 import logging
 import datetime
 import collections
 import warnings
+import pandas
 
 from dateutil import tz
 from pandas import to_datetime as pandas_to_datetime
 import numpy as np
 
-from ..compat import string_types, integer_types
+
 from ..model import Range
 from ..utils import geometry, datetime_to_seconds_since_1970
 
@@ -54,7 +54,7 @@ class Query(object):
 
         >>> query.search_terms['time']  # doctest: +NORMALIZE_WHITESPACE
         Range(begin=datetime.datetime(2001, 1, 1, 0, 0, tzinfo=<UTC>), \
-        end=datetime.datetime(2002, 1, 1, 0, 0, tzinfo=<UTC>))
+        end=datetime.datetime(2002, 1, 1, 23, 59, 59, 999999, tzinfo=tzutc()))
 
         By passing in an ``index``, the search parameters will be validated as existing on the ``product``.
 
@@ -158,6 +158,9 @@ def query_geopolygon(geopolygon=None, **kwargs):
 
 
 def query_group_by(group_by='time', **kwargs):
+    if not isinstance(group_by, str):
+        return group_by
+
     time_grouper = GroupBy(dimension='time',
                            group_by_func=lambda ds: ds.center_time,
                            units='seconds since 1970-01-01 00:00:00',
@@ -220,7 +223,7 @@ def _range_to_geopolygon(**kwargs):
 
 
 def _value_to_range(value):
-    if isinstance(value, string_types + integer_types + (float,)):
+    if isinstance(value, (str, float, int)):
         value = float(value)
         return value, value
     else:
@@ -247,12 +250,12 @@ def _datetime_to_timestamp(dt):
 
 
 def _to_datetime(t):
-    if isinstance(t, integer_types + (float,)):
+    if isinstance(t, (float, int)):
         t = datetime.datetime.fromtimestamp(t, tz=tz.tzutc())
 
     if isinstance(t, tuple):
         t = datetime.datetime(*t, tzinfo=tz.tzutc())
-    elif isinstance(t, string_types):
+    elif isinstance(t, str):
         try:
             t = datetime.datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%fZ")
         except ValueError:
@@ -266,13 +269,33 @@ def _to_datetime(t):
 
 
 def _time_to_search_dims(time_range):
-    if hasattr(time_range, '__iter__') and len(time_range) == 2:
-        time_range = Range(_to_datetime(time_range[0]), _to_datetime(time_range[1]))
-        if time_range[0] == time_range[1]:
-            return time_range[0]
-        return time_range
-    else:
-        return _to_datetime(time_range)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        tr_start, tr_end = time_range, time_range
+
+        if hasattr(time_range, '__iter__') and not isinstance(time_range, str):
+            l = list(time_range)
+            tr_start, tr_end = l[0], l[-1]
+
+        # Attempt conversion to isoformat
+        # allows pandas.Period to handle
+        # date and datetime objects
+        if hasattr(tr_start, 'isoformat'):
+            tr_start = tr_start.isoformat()
+        if hasattr(tr_end, 'isoformat'):
+            tr_end = tr_end.isoformat()
+
+        start = _to_datetime(tr_start)
+        end = _to_datetime(pandas.Period(tr_end)
+                           .end_time
+                           .to_pydatetime())
+
+        tr = Range(start, end)
+        if start == end:
+            return tr[0]
+
+        return tr
 
 
 def _convert_to_solar_time(utc, longitude):
@@ -282,10 +305,16 @@ def _convert_to_solar_time(utc, longitude):
     return utc + offset
 
 
-def solar_day(dataset):
+def solar_day(dataset, longitude=None):
     utc = dataset.center_time
-    bb = dataset.extent.to_crs(geometry.CRS('WGS84')).boundingbox
-    assert bb.left < bb.right  # TODO: Handle dateline?
-    longitude = (bb.left + bb.right) * 0.5
+
+    if longitude is None:
+        m = dataset.metadata
+        if hasattr(m, 'lon'):
+            lon = m.lon
+            longitude = (lon.begin + lon.end)*0.5
+        else:
+            raise ValueError('Cannot compute solar_day: dataset is missing spatial info')
+
     solar_time = _convert_to_solar_time(utc, longitude)
     return np.datetime64(solar_time.date(), 'D')

@@ -2,8 +2,6 @@
 xarray utilities. This module adds functionality to the base xarray module.
 """
 
-from __future__ import absolute_import
-
 from copy import deepcopy
 from xarray import DataArray
 from xarray.core.utils import decode_numpy_dict_values, ensure_us_time_resolution
@@ -27,6 +25,7 @@ def get_array_descriptor(array):
     d.update({'data': None,
               'name': array.name})
     return d
+
 
 def slice_metadata(descriptor, array_slice):
     d = deepcopy(descriptor)

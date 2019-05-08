@@ -1,8 +1,6 @@
 '''Test the store handler by flushing it, then writing and reading from it.
 '''
 
-from __future__ import absolute_import
-
 from os.path import expanduser
 from pathlib import Path
 from configparser import ConfigParser

@@ -1,7 +1,5 @@
 '''This module includes store (redis) methods to manage workers health.
 '''
-from __future__ import absolute_import
-
 import logging
 from enum import Enum, IntEnum
 from datetime import datetime

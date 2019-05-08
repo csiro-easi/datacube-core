@@ -4,8 +4,6 @@ S3AIO Class
 Array access to a single S3 object
 
 """
-from __future__ import absolute_import
-
 import SharedArray as sa
 import zstd
 from itertools import repeat, product
@@ -16,10 +14,6 @@ from pathos.threading import ThreadPool
 from pathos.multiprocessing import freeze_support, cpu_count
 from six.moves import zip
 
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
 from .s3io import S3IO, generate_array_name
 
 

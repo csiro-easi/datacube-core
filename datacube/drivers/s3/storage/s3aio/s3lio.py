@@ -4,7 +4,6 @@ S3LIO Class
 Labeled Array access, backed by multiple S3 objects.
 
 """
-from __future__ import absolute_import, division
 
 import SharedArray as sa
 import hashlib
@@ -12,6 +11,7 @@ import sys
 import zstd
 
 import numpy as np
+
 from six import integer_types
 from six.moves import map, zip
 from itertools import repeat, product
@@ -24,10 +24,6 @@ from dill import dumps, loads
 from copy import deepcopy
 from datacube.engine_common.xarray_utils import slice_metadata
 
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
 from .s3io import generate_array_name
 from .s3aio import S3AIO
 
@@ -251,7 +247,7 @@ class S3LIO(object):
         # regular_index((-35+2*0.128, 149+2*0.128), ((-35,-34),(149,150)), (4000, 4000))
         # regular_index((-35+0.128, 149+0.128), ((-35, -35+0.128),(149, 148+0.128)), (512, 512))
 
-        if all(isinstance(i, integer_types) for i in dimension_range):
+        if all(isinstance(i, int) for i in dimension_range):
             length = dimension_range
             offset = [0 for dr in dimension_range]
         else:

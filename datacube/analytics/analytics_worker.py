@@ -5,8 +5,6 @@ If performance is not as responsive as requried, a new cluster for
 JRO service calls will be created.
 """
 
-from __future__ import absolute_import, print_function
-
 from .analytics_engine2 import AnalyticsEngineV2
 from .update_engine2 import UpdateEngineV2
 from .base_job_monitor import BaseJobMonitor
@@ -73,6 +71,8 @@ class AnalyticsWorker():
                     raise RuntimeError('Update engine must be initialised by calling `initialise_engines`')
                 result = update_engine.execute(action, item_id)
                 return result
+            except ValueError as e:
+                raise(e)
             except TimeoutError as e:
                 last_error = str(e)
                 print("error - AnalyticsWorker.get_update()", str(type(e)), last_error)

@@ -1,16 +1,18 @@
 """
 Ingest data from the command-line.
 """
-from __future__ import absolute_import
 
 import uuid
 import logging
 import yaml
 import re
 import click
-from osgeo import osr
+from osgeo import gdal, osr
 import os
 from pathlib import Path
+
+WGS84_CODE = 12
+PS_CODE = 6
 
 images1 = [('1', 'coastal_aerosol'),
            ('2', 'blue'),
@@ -33,6 +35,18 @@ images2 = [('1', 'blue'),
            ('7', 'swir2'),
            ('QUALITY', 'quality')]
 
+images3 = [('1', 'green'),
+           ('2', 'red'),
+           ('3', 'nir1'),
+           ('4', 'nir2'),
+           ('QUALITY', 'quality')]
+
+
+images4 = [('4', 'green'),
+           ('5', 'red'),
+           ('6', 'nir1'),
+           ('7', 'nir2'),
+           ('QUALITY', 'quality')]
 try:
     from urllib.request import urlopen
     from urllib.parse import urlparse, urljoin
@@ -89,15 +103,19 @@ def get_coords(geo_ref_points, spatial_ref):
     return {key: transform(p) for key, p in geo_ref_points.items()}
 
 
-def satellite_ref(sat, file_name):
+def satellite_ref(sat, file_name, sid):
     """
     To load the band_names for referencing either LANDSAT8 or LANDSAT7 or LANDSAT5 bands
-    Landsat7 and Landsat5 have same band names
+    Landsat7ETM  and Landsat5TM  have same band names
     """
     name = (Path(file_name)).stem
     name_len = name.split('_')
     if sat == 'LANDSAT_8':
         sat_img = images1
+    elif sat == 'LANDSAT_5' and sid == 'MSS':
+        sat_img = images3
+    elif sat == 'LANDSAT_3':
+        sat_img = images4
     elif len(name_len) > 7:
         sat_img = images2
     else:
@@ -119,6 +137,30 @@ def get_mtl(path):
     return _parse_group(newfile)['L1_METADATA_FILE'], metafile
 
 
+def handle_proj_params(proj_params, projection):
+    map_proj = proj_params.get('MAP_PROJECTION')
+    spatial_ref = osr.SpatialReference()
+    if map_proj == 'UTM':
+        cs_code = 32600 + proj_params['UTM_ZONE']
+        spatial_ref.ImportFromEPSG(cs_code)
+        projection['spatial_reference'] = 'EPSG:%s' % cs_code
+    elif map_proj == 'PS':
+        datum = proj_params['DATUM']
+        if datum != 'WGS84':
+            raise RuntimeError('unsupported datum: "%s"' % (datum))
+        zone = 0  # ignored in the PS case
+        p_long = gdal.DecToPackedDMS(float(proj_params['VERTICAL_LON_FROM_POLE']))
+        ts_lat = gdal.DecToPackedDMS(float(proj_params['TRUE_SCALE_LAT']))
+        fe = float(proj_params['FALSE_EASTING'])
+        fn = float(proj_params['FALSE_NORTHING'])
+        args = 0, 0, 0, 0, p_long, ts_lat, fe, fn, 0, 0, 0, 0, 0, 0, 0
+        spatial_ref.ImportFromUSGS(PS_CODE, zone, args, WGS84_CODE)
+        projection['datum'] = datum
+    else:
+        raise RuntimeError('unknown map projection: "%s"' % (map_proj))
+    return spatial_ref
+
+
 def prepare_dataset(path):
     info, fileinfo = get_mtl(path)
     # Copying [PRODUCT_METADATA] group into 'info_pm'
@@ -128,14 +170,16 @@ def prepare_dataset(path):
 
     sensing_time = info_pm['DATE_ACQUIRED'] + ' ' + info_pm['SCENE_CENTER_TIME']
 
-    cs_code = 32600 + info['PROJECTION_PARAMETERS']['UTM_ZONE']
-    spatial_ref = osr.SpatialReference()
-    spatial_ref.ImportFromEPSG(cs_code)
-
     geo_ref_points = get_geo_ref_points(info_pm)
-    satellite = info_pm['SPACECRAFT_ID']
+    projection = {
+        'geo_ref_points': geo_ref_points
+    }
+    spatial_ref = handle_proj_params(info['PROJECTION_PARAMETERS'], projection)
 
-    images = satellite_ref(satellite, fileinfo)
+    satellite = info_pm['SPACECRAFT_ID']
+    sensor_id = info_pm['SENSOR_ID']
+
+    images = satellite_ref(satellite, fileinfo, sensor_id)
     return {
         'id': str(uuid.uuid5(uuid.NAMESPACE_URL, path)),
         'processing_level': level,
@@ -153,13 +197,7 @@ def prepare_dataset(path):
         },
         'format': {'name': info_pm['OUTPUT_FORMAT']},
         'grid_spatial': {
-            'projection': {
-                'geo_ref_points': geo_ref_points,
-                'spatial_reference': 'EPSG:%s' % cs_code,
-                #     'valid_data': {
-                #         'coordinates': tileInfo['tileDataGeometry']['coordinates'],
-                #         'type': tileInfo['tileDataGeometry']['type']}
-            }
+            'projection': projection
         },
         'image': {
             'bands': {

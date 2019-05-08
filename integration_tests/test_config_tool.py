@@ -2,8 +2,6 @@
 """
 Module
 """
-from __future__ import absolute_import, print_function
-
 import logging
 import random
 import re
@@ -11,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-import datacube.scripts.cli_app
 from datacube.drivers.postgres import _dynamic
 from datacube.drivers.postgres._core import drop_db, has_schema, SCHEMA_NAME
 
@@ -42,10 +39,43 @@ def test_add_example_dataset_types(clirunner, initialised_postgres_db, default_m
         print('Adding mapping {}'.format(mapping_path))
 
         result = clirunner(['-v', 'product', 'add', mapping_path])
+        assert result.exit_code == 0
 
         mappings_count = _dataset_type_count(initialised_postgres_db)
         assert mappings_count > existing_mappings, "Mapping document was not added: " + str(mapping_path)
         existing_mappings = mappings_count
+
+    result = clirunner(['-v', 'metadata', 'list'])
+    assert result.exit_code == 0
+
+    result = clirunner(['-v', 'metadata', 'show', '-f', 'json', 'eo'],
+                       expect_success=True)
+    assert result.exit_code == 0
+
+    result = clirunner(['-v', 'metadata', 'show'],
+                       expect_success=True)
+    assert result.exit_code == 0
+
+    result = clirunner(['-v', 'product', 'list'])
+    assert result.exit_code == 0
+
+    expect_result = 0 if existing_mappings > 0 else 1
+    result = clirunner(['-v', 'product', 'show'],
+                       expect_success=(expect_result == 0))
+    assert result.exit_code == expect_result
+
+    if existing_mappings > 1:
+        result = clirunner(['-v', 'product', 'show', '-f', 'json'],
+                           expect_success=False)
+        assert result.exit_code == 1
+
+        result = clirunner(['-v', 'product', 'show', '-f', 'json', 'ls8_level1_usgs'],
+                           expect_success=False)
+        assert result.exit_code == 0
+
+        result = clirunner(['-v', 'product', 'show', '-f', 'yaml', 'ls8_level1_usgs'],
+                           expect_success=False)
+        assert result.exit_code == 0
 
 
 def test_error_returned_on_invalid(clirunner, initialised_postgres_db):
@@ -100,6 +130,7 @@ def test_list_users_does_not_fail(clirunner, local_config, initialised_postgres_
             'user', 'list'
         ]
     )
+    assert result.exit_code == 0
 
 
 def test_db_init_noop(clirunner, local_config, ls5_telem_type):
@@ -148,6 +179,13 @@ def test_db_init(clirunner, initialised_postgres_db):
 
     with initialised_postgres_db.connect() as connection:
         assert has_schema(initialised_postgres_db._engine, connection._connection)
+
+
+def test_add_no_such_product(clirunner, initialised_postgres_db):
+    result = clirunner(['dataset', 'add', '--dtype', 'no_such_product'], expect_success=False)
+    assert result.exit_code != 0
+    assert "DEPRECATED option detected" in result.output
+    assert "ERROR Supplied product name" in result.output
 
 
 @pytest.fixture(params=[

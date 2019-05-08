@@ -5,32 +5,198 @@
 What's New
 **********
 
-v1.6rc2 (Maybe v1.6 proper) (?? May 2018)
-=========================================
+v1.7.0rc1 (18 April 2018)
+=========================
+
+Virtual Products
+~~~~~~~~~~~~~~~~
+
+Add :ref:`virtual-products` for multi-product loading.
+
+(:pull:`522`, :pull:`597`, :pull:`601`, :pull:`612`, :pull:`644`, :pull:`677`, :pull:`699`, :pull:`700`)
+
+Changes to Data Loading
+~~~~~~~~~~~~~~~~~~~~~~~
+The internal machinery used when loading and reprojecting data, has been completely rewritten. The new code has been
+tested, but this is a complicated and fundamental part of code and there is potential for breakage.
+
+When loading reprojected data, the new code will produce slightly different results. We don't believe that it is any
+less accurate than the old code, but you cannot expect exactly the same numeric results.
+
+Non-reprojected loads should be identical.
+
+This change has been made for two reasons:
+
+1. The reprojection is now core Data Cube, and is not the responsibility of the IO driver.
+
+2. When loading lower resolution data, DataCube can now take advantage of available overviews.
+
+- New futures based IO driver interface (:pull:`686`)
+
+Other Changes
+~~~~~~~~~~~~~
+
+- Allow specifying different resampling methods for different data variables of
+  the same Product. (:pull:`551`)
+- Allow all reampling methods supported by `rasterio`. (:pull:`622`)
+- Bug fix (Index out of bounds causing ingestion failures)
+- Support indexing data directly from HTTP/HTTPS/S3 URLs (:pull:`607`)
+- Renamed the command line tool `datacube metadata_type` to `datacube metadata` (:pull:`692`)
+- More useful output from the command line `datacube {product|metadata} {show|list}`
+- Add optional `progress_cbk` to `dc.load(_data)` (:pull:`702`), allows user to
+  monitor data loading progress.
+- Thread-safe netCDF access within `dc.load` (:pull:`705`)
+
+Performance Improvements
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Use single pass over datasets when computing bounds (:pull:`660`)
+- Bugfixes and improved performance of `dask`-backed arrays (:pull:`547`, :pull:`664`)
+
+Documentation Improvements
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Improve :ref:`api-reference` documentation.
+
+Deprecations
+~~~~~~~~~~~~
+
+- From the command line, the old query syntax for searching within vague time ranges, eg: ``2018-03 < time < 2018-04``
+  has been removed. It is unclear exactly what that syntax should mean, whether to include or exclude the months
+  specified. It is replaced by ``time in [2018-01, 2018-02]`` which has the same semantics as ``dc.load`` time queries.
+  (:pull:`709`)
+
+
+
+
+v1.6.1 (27 August 2018)
+=======================
+
+Correction release. By mistake, v1.6.0 was identical to v1.6rc2!
+
+
+v1.6.0 (23 August 2018)
+=======================
+
+- Enable use of *aliases* when specifying band names
+- Fix ingestion failing after the first run (:pull:`510`)
+- Docker images now know which version of ODC they contain (:pull:`523`)
+- Fix data loading when `nodata` is `NaN` (:pull:`531`)
+- Allow querying based on python :class:`datetime.datetime` objects. (:pull:`499`)
+- Require `rasterio 1.0.2`_ or higher, which fixes several critical bugs when
+  loading and reprojecting from multi-band files.
+- Assume fixed paths for `id` and `sources` metadata fields (:issue:`482`)
+- :class:`datacube.model.Measurement` was put to use for loading in attributes
+  and made to inherit from `dict` to preserve current behaviour. (:pull:`502`)
+- Updates when indexing data with `datacube dataset add` (See :pull:`485`, :issue:`451` and :issue:`480`)
+
+
+  - Allow indexing without lineage :option:`datacube dataset add --ignore-lineage`
+  - Removed the `--sources-policy=skip|verify|ensure`. Instead use
+    `--[no-]auto-add-lineage` and `--[no-]verify-lineage`
+  - New option :option:`datacube dataset add --exclude-product` ``<name>``
+    allows excluding some products from auto-matching
+
+- Preliminary API for indexing datasets (:pull:`511`)
+- Enable creation of MetadataTypes without having an active database connection (:pull:`535`)
+
+.. _rasterio 1.0.2: https://github.com/mapbox/rasterio/blob/1.0.2/CHANGES.txt
+
+v1.6rc2 (29 June 2018)
+======================
 
 Backwards Incompatible Changes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - The `helpers.write_geotiff()` function has been updated to support files smaller
   than 256x256. It also no longer supports specifying the time index. Before passing
-  data in, use `xarray_data.isel(time=<my_time_index>)`. (#277)
+  data in, use `xarray_data.isel(time=<my_time_index>)`. (:pull:`277`)
+
+- Removed product matching options from `datacube dataset update` (:pull:`445`).
+  No matching is needed in this case as all datasets are already in the database
+  and are associated to products.
+
+- Removed `--match-rules` option from `datacube dataset add` (:pull:`447`)
+
+- The seldom-used `stack` keyword argument has been removed from `Datcube.load`.
+  (:pull:`461`)
+
+- The behaviour of the time range queries has changed to be compatible with
+  standard Python searches (eg. time slice an xarray). Now the time range
+  selection is inclusive of any unspecified time units. (:pull:`440`)
+
+  Example 1:
+    `time=('2008-01', '2008-03')` previously would have returned all data from
+    the start of 1st January, 2008 to the end of 1st of March, 2008. Now, this
+    query will return all data from the start of 1st January, 2008 and
+    23:59:59.999 on 31st of March, 2008.
+
+  Example 2:
+    To specify a search time between 1st of January and 29th of February, 2008
+    (inclusive), use a search query like `time=('2008-01', '2008-02')`. This query
+    is equivalent to using any of the following in the second time element:
+
+    | `('2008-02-29')`
+    | `('2008-02-29 23')`
+    | `('2008-02-29 23:59')`
+    | `('2008-02-29 23:59:59')`
+    | `('2008-02-29 23:59:59.999')`
+
 
 Changes
 ~~~~~~~
 
-- The masking related function ``describe_variable_flags()`` now returns a
-  pandas DataFrame by default. This will display as a table in Jupyter
-  Notebooks. (:pull:`422`)
+- A `--location-policy` option has been added to the `datacube dataset update`
+  command. Previously this command would always add a new location to the list
+  of URIs associated with a dataset. It's now possible to specify `archive` and
+  `forget` options, which will mark previous location as archived or remove them
+  from the index altogether. The default behaviour is unchanged. (:pull:`469`)
 
+- The masking related function `describe_variable_flags()` now returns a pandas
+  DataFrame by default. This will display as a table in Jupyter Notebooks.
+  (:pull:`422`)
+
+- Usability improvements in `datacube dataset [add|update]` commands
+  (:issue:`447`, :issue:`448`, :issue:`398`)
+
+  - Embedded documentation updates
+  - Deprecated `--auto-match` (it was always on anyway)
+  - Renamed `--dtype` to `--product` (the old name will still work, but with a warning)
+  - Add option to skip lineage data when indexing (useful for saving time when
+    testing) (:pull:`473`)
+
+- Enable compression for metadata documents stored in NetCDFs generated by
+  `stacker` and `ingestor` (:issue:`452`)
+
+- Implement better handling of stacked NetCDF files (:issue:`415`)
+
+  - Record the slice index as part of the dataset location URI, using `#part=<int>`
+    syntax, index is 0-based
+  - Use this index when loading data instead of fuzzy searching by timestamp
+  - Fall back to the old behaviour when `#part=<int>` is missing and the file is
+    more than one time slice deep
+
+- Expose the following dataset fields and make them searchable:
+
+  -  `indexed_time` (when the dataset was indexed)
+  -  `indexed_by` (user who indexed the dataset)
+  -  `creation_time` (creation of dataset: when it was processed)
+  -  `label` (the label for a dataset)
+
+  (See :pull:`432` for more details)
 
 Bug Fixes
 ~~~~~~~~~
 
-- `.dimensions` property of a product no longer crashes when product is missing
-  a `grid_spec`, instead defaults to `time,y,x`
+- The `.dimensions` property of a product no longer crashes when product is
+  missing a `grid_spec`. It instead defaults to `time,y,x`
 
-- Fix a regression in v1.6rc1 whereby it was impossible to run ``datacube ingest``
-  to create products which were defined in 1.5.5 and earlier versions of ODC. (:issue:`432`, :pull:`436`)
+- Fix a regression in `v1.6rc1` which made it impossible to run `datacube
+  ingest` to create products which were defined in `1.5.5` and earlier versions of
+  ODC. (:issue:`423`, :pull:`436`)
+
+- Allow specifying the chunking for string variables when writing NetCDFs
+  (:issue:`453`)
 
 
 

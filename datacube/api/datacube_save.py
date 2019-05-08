@@ -1,5 +1,3 @@
-from __future__ import absolute_import, division, print_function
-
 import logging
 import numpy
 from uuid import uuid4
@@ -12,7 +10,7 @@ from pandas import to_datetime
 from datacube.drivers import storage_writer_by_name
 from datacube.model import Dataset
 from datacube.model.utils import make_dataset
-from datacube.utils.geometry import _get_coordinates
+from datacube.utils.geometry._base import _get_coordinates
 from pprint import pprint
 
 _LOG = logging.getLogger('datacube-save')

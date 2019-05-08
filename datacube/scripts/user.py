@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 
 import logging
 import click
@@ -6,8 +5,6 @@ import csv
 import sys
 import yaml
 import yaml.resolver
-from yaml import Node
-from decimal import Decimal
 
 from collections import OrderedDict
 
@@ -16,7 +13,6 @@ from datacube.config import LocalConfig
 from datacube.index.index import Index
 from datacube.ui import click as ui
 from datacube.ui.click import cli
-from datacube.model import Range
 from datacube.utils.serialise import SafeDatacubeDumper
 
 _LOG = logging.getLogger('datacube-user')
@@ -26,6 +22,7 @@ USER_ROLES = ('user', 'ingest', 'manage', 'admin')
 @cli.group(name='user', help='User management commands')
 def user_cmd():
     pass
+
 
 def build_user_list(index):
     lstdct = []
@@ -37,6 +34,7 @@ def build_user_list(index):
         ))
         lstdct.append(info)
     return lstdct
+
 
 def _write_csv(index):
     writer = csv.DictWriter(sys.stdout, ['role', 'user', 'description'], extrasaction='ignore')
@@ -61,6 +59,7 @@ def _write_yaml(index):
 
     return yaml.dump_all(index, sys.stdout, SafeDatacubeDumper, default_flow_style=False, indent=4)
 
+
 _OUTPUT_WRITERS = {
     'csv': _write_csv,
     'yaml': _write_yaml,
@@ -71,13 +70,12 @@ _OUTPUT_WRITERS = {
 @click.option('-f', help='Output format',
               type=click.Choice(list(_OUTPUT_WRITERS)), default='yaml', show_default=True)
 @ui.pass_index()
-
-
 def list_users(index, f):
     """
     List users
     """
     _OUTPUT_WRITERS[f](build_user_list(index))
+
 
 @user_cmd.command('grant')
 @click.argument('role',

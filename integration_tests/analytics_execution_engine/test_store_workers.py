@@ -1,8 +1,6 @@
 '''Test the store workers management.
 '''
 
-from __future__ import absolute_import
-
 from time import time
 import pytest
 

@@ -5,8 +5,6 @@ Being a rather low level API, very few checks are performed on values
 for better performance. For example, user data can be added to a job
 ID although there is no job with that ID.
 '''
-from __future__ import absolute_import
-
 import logging
 from time import time
 from enum import Enum, IntEnum

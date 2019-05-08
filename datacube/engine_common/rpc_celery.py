@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-
 import ssl
 from time import sleep
 from celery import Celery

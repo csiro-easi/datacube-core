@@ -1,5 +1,4 @@
 """S3 indexing module."""
-from __future__ import absolute_import
 
 import logging
 from uuid import uuid4
@@ -73,15 +72,15 @@ class DatasetResource(BaseDatasetResource):
     additional s3 information to specific tables.
     """
 
-    def add(self, dataset, sources_policy='verify', **kwargs):
-        saved_dataset = super(DatasetResource, self).add(dataset, sources_policy, **kwargs)
+    def add(self, dataset, with_lineage=None, **kwargs):
+        saved_dataset = super(DatasetResource, self).add(dataset, with_lineage=with_lineage, **kwargs)
 
         if dataset.format == FORMAT:
             storage_metadata = kwargs['storage_metadata']  # It's an error to not include this
             self.add_datasets_to_s3_tables([dataset.id], storage_metadata)
         return saved_dataset
 
-    def add_multiple(self, datasets, sources_policy='verify'):
+    def add_multiple(self, datasets, with_lineage=None):
         """Index several datasets.
 
         Perform the normal indexing, followed by the s3 specific
@@ -91,7 +90,7 @@ class DatasetResource(BaseDatasetResource):
         :param datasets: The datasets to be indexed. It must contain
           an attribute named `storage_metadata` otherwise a ValueError
           is raised.
-        :param str sources_policy: The sources policy.
+        :param bool with_lineage: Whether to recursively add lineage, default: yes
         :return: The number of datasets indexed.
         :rtype: int
 
@@ -104,7 +103,7 @@ class DatasetResource(BaseDatasetResource):
         # dataset_refs = []
         # n = 0
         # for dataset in datasets.values:
-        #     self.add(dataset, sources_policy=sources_policy)
+        #     self.add(dataset, with_lineage=with_lineage)
         #     dataset_refs.append(dataset.id)
         #     n += 1
         # if n == len(datasets):
@@ -124,19 +123,20 @@ class DatasetResource(BaseDatasetResource):
         """
         # Build regular indices as list of triple scalars (as
         # numpy types are not accepted by sqlalchemy)
-        regular_indices = [list(map(np.asscalar, index))
+        regular_indices = [list(i.item() for i in index)
                            for index in output['regular_index'] if index is not None]
 
         # Build irregular indices list, padding them all to
         # the same size as required by Postgres
         # multidimensional arrays
-        irregular_indices = [list(map(np.asscalar, index))
+        irregular_indices = [list(i.item() for i in index)
                              for index in output['irregular_index'] if index is not None]
+
         if irregular_indices:
             irregular_max_size = max(map(len, irregular_indices))
             irregular_indices = [index + [None] * (irregular_max_size - len(index))
                                  for index in irregular_indices]
-
+        # assert False
         _LOG.debug('put_s3_dataset(%s, %s, %s, %s, %s, %s, %s, %s, %s ,%s, %s)', s3_dataset_id,
                    output['base_name'], band, output['bucket'],
                    output['macro_shape'], output['chunk_size'],
@@ -168,8 +168,8 @@ class DatasetResource(BaseDatasetResource):
         for key_map in output['key_maps']:
             micro_shape = [chunk_dim.stop - chunk_dim.start for chunk_dim in key_map['chunk']]
             # Convert index_min and index_max to scalars
-            index_min = list(map(np.asscalar, key_map['index_min']))
-            index_max = list(map(np.asscalar, key_map['index_max']))
+            index_min = [list(i.item() for i in key_map['index_min'])]
+            index_max = [list(i.item() for i in key_map['index_max'])]
 
             _LOG.debug('put_s3_dataset_chunk(%s, %s, %s, %s, %s, %s, %s)',
                        s3_dataset_id, key_map['s3_key'],
@@ -225,13 +225,13 @@ class DatasetResource(BaseDatasetResource):
                 # Add mappings
                 self._add_s3_dataset_mappings(transaction, s3_dataset_id, band, dataset_refs)
 
-    def _make(self, dataset_res, full_info=False):
+    def _make(self, dataset_res, full_info=False, product=None):
         """
         :rtype Dataset
 
         :param bool full_info: Include all available fields
         """
-        dataset = super(DatasetResource, self)._make(dataset_res, full_info)
+        dataset = super(DatasetResource, self)._make(dataset_res, full_info=full_info, product=product)
         self._extend_dataset_with_s3_metadata(dataset)
         return dataset
 

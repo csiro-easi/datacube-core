@@ -8,12 +8,12 @@ tests_require = [
     'compliance-checker',
     'hypothesis',
     'mock',
-    'objgraph',
     'pycodestyle',
     'pylint',
     'pytest',
     'pytest-cov',
     'pytest-timeout',
+    'moto',
 ]
 
 extras_require = {
@@ -23,7 +23,7 @@ extras_require = {
     'doc': ['Sphinx', 'setuptools'],
     'replicas': ['paramiko', 'sshtunnel', 'tqdm'],
     'celery': ['celery>=4', 'redis'],
-    's3': ['boto3==1.4.3', 'SharedArray', 'pathos', 'zstandard'],
+    's3': ['boto3', 'SharedArray', 'pathos', 'zstandard'],
     'test': tests_require,
 }
 # An 'all' option, following ipython naming conventions.
@@ -32,10 +32,6 @@ extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 extra_plugins = dict(read=[], write=[], index=[], rpc=[])
 
 if os.name != 'nt':
-    extra_plugins['read'].extend([
-        's3aio = datacube.drivers.s3.driver:reader_driver_init [s3]',
-        's3aio_test = datacube.drivers.s3.driver:reader_test_driver_init [s3]',
-    ])
     extra_plugins['write'].extend([
         's3aio = datacube.drivers.s3.driver:writer_driver_init [s3]',
         's3aio_test = datacube.drivers.s3.driver:writer_test_driver_init [s3]',
@@ -95,19 +91,19 @@ setup(
         'click>=5.0',
         'cloudpickle>=0.4',
         'dask[array]',
-        'futures; python_version<"3"',
         'gdal>=1.9',
         'jsonschema',
         'netcdf4',
         'numpy',
-        'pathlib;python_version<"3"',
         'psycopg2',
         'pypeg2',
+        'lark-parser>=0.6.7',
         'python-dateutil',
         'pyyaml',
-        'rasterio>=0.9a10',  # required for zip reading, 0.9 gets around 1.0a ordering problems
+        'rasterio>=1.0.2',  # Multi-band re-project fixed in that version
         'singledispatch',
         'sqlalchemy',
+        'toolz',
         'xarray>=0.9',  # >0.9 fixes most problems with `crs` attributes being lost
     ],
     extras_require=extras_require,
@@ -139,6 +135,8 @@ setup(
         ],
         'datacube.plugins.rpc': [
             'celery = datacube.engine_common.rpc_celery:make_rpc [celery]',
+            'serial = datacube.engine_common.rpc_local:make_rpc_serial',
+            'thread = datacube.engine_common.rpc_local:make_rpc_thread',
             *extra_plugins['rpc'],
         ],
     },

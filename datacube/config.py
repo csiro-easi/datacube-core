@@ -2,11 +2,8 @@
 """
 User configuration.
 """
-from __future__ import absolute_import
 
 import os
-
-from . import compat
 
 ENVIRONMENT_VARNAME = 'DATACUBE_CONFIG_PATH'
 #: Config locations in order. Properties found in latter locations override
@@ -48,7 +45,7 @@ redis_celery.ssl: False
 execution_engine.user_bucket: eetest2-user
 execution_engine.result_bucket: eetest2-system
 execution_engine.use_s3: False
-execution_engine.rpc: celery
+execution_engine.rpc: thread
 
 [user]
 # Which environment to use when none is specified explicitly.
@@ -58,6 +55,14 @@ execution_engine.rpc: celery
 
 #: Used in place of None as a default, when None is a valid but not default parameter to a function
 _UNSET = object()
+
+
+def read_config(default_text=None):
+    import configparser
+    config = configparser.ConfigParser()
+    if default_text:
+        config.read_string(default_text)
+    return config
 
 
 class LocalConfig(object):
@@ -122,7 +127,7 @@ class LocalConfig(object):
         """
         if isinstance(paths, str) or hasattr(paths, '__fspath__'):  # Use os.PathLike in 3.6+
             paths = [paths]
-        config = compat.read_config(_DEFAULT_CONF)
+        config = read_config(_DEFAULT_CONF)
         files_loaded = config.read(str(p) for p in paths if p)
 
         return LocalConfig(
