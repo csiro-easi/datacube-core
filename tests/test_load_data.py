@@ -110,6 +110,74 @@ def test_load_data(tmpdir):
     assert progress_call_data == [(1, 2), (2, 2)]
 
 
+def test_load_data_cbk(tmpdir):
+    from datacube.api import TerminateCurrentLoad
+
+    tmpdir = Path(str(tmpdir))
+
+    spatial = dict(resolution=(15, -15),
+                   offset=(11230, 1381110),)
+
+    nodata = -999
+    aa = mk_test_image(96, 64, 'int16', nodata=nodata)
+
+    bands = [SimpleNamespace(name=name, values=aa, nodata=nodata)
+             for name in ['aa', 'bb']]
+
+    ds, gbox = gen_tiff_dataset(bands,
+                                tmpdir,
+                                prefix='ds1-',
+                                timestamp='2018-07-19',
+                                **spatial)
+    assert ds.time is not None
+
+    ds2, _ = gen_tiff_dataset(bands,
+                              tmpdir,
+                              prefix='ds2-',
+                              timestamp='2018-07-19',
+                              **spatial)
+    assert ds.time is not None
+    assert ds.time == ds2.time
+
+    sources = Datacube.group_datasets([ds, ds2], 'time')
+    progress_call_data = []
+
+    def progress_cbk(n, nt):
+        progress_call_data.append((n, nt))
+
+    ds_data = Datacube.load_data(sources, gbox, ds.type.measurements,
+                                 progress_cbk=progress_cbk)
+
+    assert progress_call_data == [(1, 4), (2, 4), (3, 4), (4, 4)]
+    np.testing.assert_array_equal(aa, ds_data.aa.values[0])
+    np.testing.assert_array_equal(aa, ds_data.bb.values[0])
+
+    def progress_cbk_fail_early(n, nt):
+        progress_call_data.append((n, nt))
+        raise TerminateCurrentLoad()
+
+    def progress_cbk_fail_early2(n, nt):
+        progress_call_data.append((n, nt))
+        if n > 1:
+            raise KeyboardInterrupt()
+
+    progress_call_data = []
+    ds_data = Datacube.load_data(sources, gbox, ds.type.measurements,
+                                 progress_cbk=progress_cbk_fail_early)
+
+    assert progress_call_data == [(1, 4)]
+    assert ds_data.dc_partial_load is True
+    np.testing.assert_array_equal(aa, ds_data.aa.values[0])
+    np.testing.assert_array_equal(nodata, ds_data.bb.values[0])
+
+    progress_call_data = []
+    ds_data = Datacube.load_data(sources, gbox, ds.type.measurements,
+                                 progress_cbk=progress_cbk_fail_early2)
+
+    assert ds_data.dc_partial_load is True
+    assert progress_call_data == [(1, 4), (2, 4)]
+
+
 def test_hdf5_lock_release_on_failure():
     from datacube.storage._rio import RasterDatasetDataSource, _HDF5_LOCK
     from datacube.storage import BandInfo
@@ -221,3 +289,56 @@ def test_missing_file_handling():
     with pytest.raises(IOError):
         with ignore_exceptions_if(True, (ValueError, ArithmeticError)):
             rio_slurp('no-such-file.tiff')
+
+
+def test_native_load(tmpdir):
+    from datacube.testutils.io import native_load
+
+    tmpdir = Path(str(tmpdir))
+    spatial = dict(resolution=(15, -15),
+                   offset=(11230, 1381110),)
+    nodata = -999
+    aa = mk_test_image(96, 64, 'int16', nodata=nodata)
+    cc = mk_test_image(32, 16, 'int16', nodata=nodata)
+
+    bands = [SimpleNamespace(name=name, values=aa, nodata=nodata)
+             for name in ['aa', 'bb']]
+    bands.append(SimpleNamespace(name='cc', values=cc, nodata=nodata))
+
+    ds, gbox = gen_tiff_dataset(bands[:2],
+                                tmpdir,
+                                prefix='ds1-',
+                                timestamp='2018-07-19',
+                                **spatial)
+
+    xx = native_load(ds)
+    assert xx.geobox == gbox
+    np.testing.assert_array_equal(aa, xx.isel(time=0).aa.values)
+    np.testing.assert_array_equal(aa, xx.isel(time=0).bb.values)
+
+    ds, gbox_cc = gen_tiff_dataset(bands,
+                                   tmpdir,
+                                   prefix='ds2-',
+                                   timestamp='2018-07-19',
+                                   **spatial)
+
+    # cc is different size from aa,bb
+    with pytest.raises(ValueError):
+        xx = native_load(ds)
+
+    # aa and bb are the same
+    xx = native_load(ds, ['aa', 'bb'])
+    assert xx.geobox == gbox
+    np.testing.assert_array_equal(aa, xx.isel(time=0).aa.values)
+    np.testing.assert_array_equal(aa, xx.isel(time=0).bb.values)
+
+    # cc will be reprojected
+    xx = native_load(ds, basis='aa')
+    assert xx.geobox == gbox
+    np.testing.assert_array_equal(aa, xx.isel(time=0).aa.values)
+    np.testing.assert_array_equal(aa, xx.isel(time=0).bb.values)
+
+    # cc is compatible with self
+    xx = native_load(ds, ['cc'])
+    assert xx.geobox == gbox_cc
+    np.testing.assert_array_equal(cc, xx.isel(time=0).cc.values)

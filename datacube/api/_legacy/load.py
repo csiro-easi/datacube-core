@@ -10,6 +10,9 @@ import uuid
 from math import ceil
 from typing import Union, Optional, Callable, List, Any
 
+from concurrent.futures import ThreadPoolExecutor, wait
+from multiprocessing import cpu_count
+
 from datacube.utils import ignore_exceptions_if
 from datacube.utils.geometry import GeoBox, roi_is_empty
 from datacube.storage import BandInfo, DataSource
@@ -193,13 +196,27 @@ def xr_load(sources, geobox, measurements,
 
     data = Datacube.create_storage(sources.coords, geobox, measurements)
 
-    # TODO: re-add use_threads
-    for index, datasets in np.ndenumerate(sources.values):
-        for m in measurements:
+    if use_threads:
+        def work_load_data(index, datasets, m):
             t_slice = data[m.name].values[index]
-
             fuse_measurement(t_slice, datasets, geobox, m,
                              mk_new=mk_new,
                              skip_broken_datasets=skip_broken_datasets)
+
+        futures = []
+        pool = ThreadPoolExecutor(cpu_count()*2)
+        for index, datasets in np.ndenumerate(sources.values):
+            for m in measurements:
+                futures.append(pool.submit(work_load_data, index, datasets, m))
+
+        wait(futures)
+    else:
+        for index, datasets in np.ndenumerate(sources.values):
+            for m in measurements:
+                t_slice = data[m.name].values[index]
+
+                fuse_measurement(t_slice, datasets, geobox, m,
+                                 mk_new=mk_new,
+                                 skip_broken_datasets=skip_broken_datasets)
 
     return data

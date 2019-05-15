@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import List
 
 import click
 import pandas as pd
@@ -29,7 +30,7 @@ def product_cli():
 @click.option('--allow-exclusive-lock/--forbid-exclusive-lock', is_flag=True, default=False,
               help='Allow index to be locked from other users while updating (default: false)')
 @click.argument('files',
-                type=click.Path(exists=True, readable=True, writable=False),
+                type=str,
                 nargs=-1)
 @ui.pass_index()
 def add_products(index, allow_exclusive_lock, files):
@@ -37,7 +38,7 @@ def add_products(index, allow_exclusive_lock, files):
     """
     Add or update products in the generic index.
     """
-    for descriptor_path, parsed_doc in read_documents(*(Path(f) for f in files)):
+    for descriptor_path, parsed_doc in read_documents(*files):
         try:
             type_ = index.products.from_doc(parsed_doc)
             index.products.add(type_, allow_table_lock=allow_exclusive_lock)
@@ -57,12 +58,9 @@ def add_products(index, allow_exclusive_lock, files):
               help='Allow index to be locked from other users while updating (default: false)')
 @click.option('--dry-run', '-d', is_flag=True, default=False,
               help='Check if everything is ok')
-@click.argument('files',
-                type=click.Path(exists=True, readable=True, writable=False),
-                nargs=-1)
+@click.argument('files', type=str, nargs=-1)
 @ui.pass_index()
-def update_products(index, allow_unsafe, allow_exclusive_lock, dry_run, files):
-    # type: (Index, bool, bool, bool, list) -> None
+def update_products(index: Index, allow_unsafe: bool, allow_exclusive_lock: bool, dry_run: bool, files: List):
     """
     Update existing products.
 

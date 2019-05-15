@@ -19,6 +19,13 @@ from ..index import index_connect
 from ..drivers import new_datasource
 
 
+class TerminateCurrentLoad(Exception):
+    """ This exception is raised by user code from `progress_cbk`
+        to terminate currently running `.load`
+    """
+    pass
+
+
 class Datacube(object):
     """
     Interface to search, read and write a datacube.
@@ -502,9 +509,13 @@ class Datacube(object):
             for m in measurements:
                 t_slice = data[m.name].values[index]
 
-                _fuse_measurement(t_slice, datasets, geobox, m,
-                                  skip_broken_datasets=skip_broken_datasets,
-                                  progress_cbk=_cbk)
+                try:
+                    _fuse_measurement(t_slice, datasets, geobox, m,
+                                      skip_broken_datasets=skip_broken_datasets,
+                                      progress_cbk=_cbk)
+                except (TerminateCurrentLoad, KeyboardInterrupt):
+                    data.attrs['dc_partial_load'] = True
+                    return data
 
         return data
 
@@ -695,8 +706,9 @@ def output_geobox(like=None, output_crs=None, resolution=None, align=None,
 def select_datasets_inside_polygon(datasets, polygon):
     # Check against the bounding box of the original scene, can throw away some portions
     assert polygon is not None
+    query_crs = polygon.crs
     for dataset in datasets:
-        if intersects(polygon.to_crs(dataset.crs), dataset.extent):
+        if intersects(polygon, dataset.extent.to_crs(query_crs)):
             yield dataset
 
 

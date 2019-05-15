@@ -14,6 +14,8 @@ from .tools import roi_normalise, roi_shape
 Coordinate = namedtuple('Coordinate', ('values', 'units'))
 _BoundingBox = namedtuple('BoundingBox', ('left', 'bottom', 'right', 'top'))
 
+# pylint: disable=too-many-lines
+
 
 class BoundingBox(_BoundingBox):
     """Bounding box, defining extent in cartesian coordinates.
@@ -204,8 +206,12 @@ class CRS(object):
         return "CRS('%s')" % self.crs_str
 
     def __eq__(self, other):
+        if other is self:
+            return True
         if isinstance(other, str):
             other = CRS(other)
+        elif not isinstance(other, CRS):
+            return False
         gdal_thinks_issame = self._crs.IsSame(other._crs) == 1  # pylint: disable=protected-access
         if gdal_thinks_issame:
             return True
@@ -525,7 +531,8 @@ class Geometry(object):
         return not self.is_empty
 
     def __eq__(self, other):
-        return self.crs == other.crs and self._geom.Equal(other._geom)  # pylint: disable=protected-access
+        return (hasattr(other, 'crs') and self.crs == other.crs and
+                hasattr(other, '_geom') and self._geom.Equal(other._geom))  # pylint: disable=protected-access
 
     def __str__(self):
         return 'Geometry(%s, %r)' % (self.__geo_interface__, self.crs)

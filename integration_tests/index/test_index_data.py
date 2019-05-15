@@ -13,9 +13,9 @@ from uuid import UUID
 import pytest
 from dateutil import tz
 
-from datacube.index.index import Index
-from datacube.index.exceptions import MissingRecordError
 from datacube.drivers.postgres import PostgresDb
+from datacube.index.exceptions import MissingRecordError
+from datacube.index.index import Index
 from datacube.model import Dataset, MetadataType
 
 _telemetry_uuid = UUID('4ec8fe97-e8b9-11e4-87ff-1040f381a756')
@@ -66,7 +66,6 @@ _pseudo_telemetry_dataset_type = {
     },
     'metadata_type': 'eo'
 }
-_EXAMPLE_LS7_NBAR_DATASET_FILE = Path(__file__).parent.joinpath('ls7-nbar-example.yaml')
 
 
 def test_archive_datasets(index, initialised_postgres_db, local_config, default_metadata_type):

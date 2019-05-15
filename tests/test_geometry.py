@@ -145,7 +145,13 @@ def test_tests():
 def test_ops():
     box1 = geometry.box(10, 10, 30, 30, crs=epsg4326)
     box2 = geometry.box(20, 10, 40, 30, crs=epsg4326)
+    box3 = geometry.box(20, 10, 40, 30, crs=epsg4326)
     box4 = geometry.box(40, 10, 60, 30, crs=epsg4326)
+    no_box = None
+
+    assert box1 != box2
+    assert box2 == box3
+    assert box3 != no_box
 
     union1 = box1.union(box2)
     assert union1.area == 600.0
@@ -280,6 +286,15 @@ class TestCRSEqualityComparisons(object):
         assert b == c
 
         assert a != epsg4326
+
+    def test_comparison_edge_cases(self):
+        a = epsg4326
+        none_crs = None
+        assert a == a
+        assert a == str(a)
+        assert (a == none_crs) is False
+        assert (a == []) is False
+        assert (a == TestCRSEqualityComparisons) is False
 
     def test_grs80_comparison(self):
         a = geometry.CRS("""GEOGCS["GEOCENTRIC DATUM of AUSTRALIA",
