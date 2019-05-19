@@ -1,7 +1,7 @@
 # coding=utf-8
 
 # We often have one-arg-per column, so these checks aren't so useful.
-# pylint: disable=too-many-arguments,too-many-public-methods
+# pylint: disable=too-many-arguments,too-many-public-methods,too-many-lines
 
 # SQLAlchemy queries require "column == None", not "column is None" due to operator overloading:
 # pylint: disable=singleton-comparison
@@ -446,6 +446,7 @@ class PostgresDbAPI(object):
         :type limit: int
         :rtype: sqlalchemy.Expression
         """
+
         if select_fields:
             select_columns = tuple(
                 f.alchemy_expression.label(f.name)
@@ -533,6 +534,84 @@ class PostgresDbAPI(object):
         """
         select_query = self.search_datasets_query(expressions, source_exprs,
                                                   select_fields, with_source_ids, limit)
+        return self._connection.execute(select_query)
+
+    @staticmethod
+    def search_unique_datasets_query(expressions, select_fields, limit):
+        """
+        'unique' here refer to that the query results do not contain datasets
+        having the same 'id' more than once.
+
+        We are not dealing with dataset_source table here and we are not joining
+        dataset table with dataset_location table. We are aggregating stuff
+        in dataset_location per dataset basis if required. It returns the construted
+        query.
+        """
+
+        # expressions involving DATASET_SOURCE cannot not done for now
+        for expression in expressions:
+            assert expression.field.required_alchemy_table != DATASET_SOURCE,\
+                'Joins with dataset_source cannot be done for this query'
+
+        # expressions involving 'uri' and 'uris' will be handled different
+        expressions = [expression for expression in expressions
+                       if expression.field.required_alchemy_table != DATASET_LOCATION]
+
+        if select_fields:
+            select_columns = []
+            for field in select_fields:
+                if field.name in {'uri', 'uris'}:
+                    # All active URIs, from newest to oldest
+                    uris_field = func.array(
+                        select([
+                            _dataset_uri_field(SELECTED_DATASET_LOCATION)
+                        ]).where(
+                            and_(
+                                SELECTED_DATASET_LOCATION.c.dataset_ref == DATASET.c.id,
+                                SELECTED_DATASET_LOCATION.c.archived == None
+                            )
+                        ).order_by(
+                            SELECTED_DATASET_LOCATION.c.added.desc(),
+                            SELECTED_DATASET_LOCATION.c.id.desc()
+                        ).label('uris')
+                    ).label('uris')
+                    select_columns.append(uris_field)
+                else:
+                    select_columns.append(field.alchemy_expression.label(field.name))
+        else:
+            select_columns = _DATASET_SELECT_FIELDS
+
+        raw_expressions = PostgresDbAPI._alchemify_expressions(expressions)
+
+        # We don't need 'DATASET_LOCATION table in the from expression
+        select_fields_ = [field for field in select_fields if field.name not in {'uri', 'uris'}]
+
+        from_expression = PostgresDbAPI._from_expression(DATASET, expressions, select_fields_)
+        where_expr = and_(DATASET.c.archived == None, *raw_expressions)
+
+        return(
+            select(
+                select_columns
+            ).select_from(
+                from_expression
+            ).where(
+                where_expr
+            ).limit(
+                limit
+            )
+        )
+
+    def search_unique_datasets(self, expressions, select_fields=None, limit=None):
+        """
+        Processes a search query without duplicating datasets. 'unique' here refer to
+        that the results do not contain datasets having the same 'id' more than once.
+        we achieve this by not allowing dataset table to join with dataset_location or
+        dataset_source tables. Joining with other tables would not result in multiple
+        records per dataset due to the direction of cardinality.
+        """
+
+        select_query = self.search_unique_datasets_query(expressions, select_fields, limit)
+
         return self._connection.execute(select_query)
 
     def get_duplicates(self, match_fields, expressions):

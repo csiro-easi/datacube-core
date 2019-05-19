@@ -10,15 +10,44 @@ from uuid import UUID
 
 from datacube.model import Dataset, DatasetType
 from datacube.model.utils import flatten_datasets
-from datacube.utils import jsonify_document, changes
+from datacube.utils import jsonify_document, changes, cached_property
 from datacube.utils.changes import get_doc_changes
 from . import fields
+
+import json
+from datacube.drivers.postgres._fields import SimpleDocField, DateDocField
+from datacube.drivers.postgres._schema import DATASET
+from sqlalchemy import select, func
+from datacube.model.fields import Field
 
 _LOG = logging.getLogger(__name__)
 
 
 # It's a public api, so we can't reorganise old methods.
 # pylint: disable=too-many-public-methods, too-many-lines
+
+class DatasetSpatialMixin(object):
+    __slots__ = ()
+
+    @property
+    def _gs(self):
+        return self.grid_spatial
+
+    @property
+    def crs(self):
+        return Dataset.crs.__get__(self)
+
+    @cached_property
+    def extent(self):
+        return Dataset.extent.func(self)
+
+    @property
+    def transform(self):
+        return Dataset.transform.__get__(self)
+
+    @property
+    def bounds(self):
+        return Dataset.bounds.__get__(self)
 
 
 class DatasetResource(object):
@@ -703,3 +732,180 @@ class DatasetResource(object):
         :rtype: list[Dataset]
         """
         return list(self.search(**query))
+
+    def get_product_time_bounds(self, product: str):
+        """
+        Returns the minimum and maximum acquisition time of the product.
+        """
+
+        # Get the offsets from dataset doc
+        product = self.types.get_by_name(product)
+        dataset_section = product.metadata_type.definition['dataset']
+        min_offset = dataset_section['search_fields']['time']['min_offset']
+        max_offset = dataset_section['search_fields']['time']['max_offset']
+
+        time_min = DateDocField('aquisition_time_min',
+                                'Min of time when dataset was acquired',
+                                DATASET.c.metadata,
+                                False,  # is it indexed
+                                offset=min_offset,
+                                selection='least')
+
+        time_max = DateDocField('aquisition_time_max',
+                                'Max of time when dataset was acquired',
+                                DATASET.c.metadata,
+                                False,  # is it indexed
+                                offset=max_offset,
+                                selection='greatest')
+
+        with self._db.connect() as connection:
+            result = connection.execute(
+                select(
+                    [func.min(time_min.alchemy_expression), func.max(time_max.alchemy_expression)]
+                ).where(
+                    DATASET.c.dataset_type_ref == product.id
+                )
+            ).first()
+
+        return result
+
+    # pylint: disable=redefined-outer-name
+    def search_returning_datasets_light(self, field_names: tuple, custom_offsets=None, limit=None, **query):
+        """
+        This is a dataset search function that returns the results as objects of a dynamically
+        generated Dataset class that is a subclass of tuple.
+
+        Only the requested fields will be returned together with related derived attributes as property functions
+        similer to the datacube.model.Dataset class. For example, if 'extent'is requested all of
+        'crs', 'extent', 'transform', and 'bounds' are available as property functions.
+
+        The field_names can be custom fields in addition to those specified in metadata_type, fixed fields, or
+        native fields. The field_names can also be derived fields like 'extent', 'crs', 'transform',
+        and 'bounds'. The custom fields require custom offsets of the metadata doc be provided.
+
+        The datasets can be selected based on values of custom fields as long as relevant custom
+        offsets are provided. However custom field values are not transformed so must match what is
+        stored in the database.
+
+        :param field_names: A tuple of field names that would be returned including derived fields
+                            such as extent, crs
+        :param custom_offsets: A dictionary of offsets in the metadata doc for custom fields
+        :param limit: Number of datasets returned per product.
+        :param query: key, value mappings of query that will be processed against metadata_types,
+                      product definitions and/or dataset table.
+        :return: A Dynamically generated DatasetLight (a subclass of namedtuple and possibly with
+        property functions).
+        """
+
+        assert field_names
+
+        for product, query_exprs in self.make_query_expr(query, custom_offsets):
+
+            select_fields = self.make_select_fields(product, field_names, custom_offsets)
+            select_field_names = tuple(field.name for field in select_fields)
+            result_type = namedtuple('DatasetLight', select_field_names)
+
+            if 'grid_spatial' in select_field_names:
+                class DatasetLight(result_type, DatasetSpatialMixin):
+                    pass
+            else:
+                class DatasetLight(result_type):
+                    __slots__ = ()
+
+            with self._db.connect() as connection:
+                results = connection.search_unique_datasets(
+                    query_exprs,
+                    select_fields=select_fields,
+                    limit=limit
+                )
+
+            for result in results:
+                field_values = dict()
+                for i_, field in enumerate(select_fields):
+                    # We need to load the simple doc fields
+                    if isinstance(field, SimpleDocField):
+                        field_values[field.name] = json.loads(result[i_])
+                    else:
+                        field_values[field.name] = result[i_]
+
+                yield DatasetLight(**field_values)
+
+    def make_select_fields(self, product, field_names, custom_offsets):
+        """
+        Parse and generate the list of select fields to be passed to the database API.
+        """
+
+        assert product and field_names
+
+        dataset_fields = product.metadata_type.dataset_fields
+        dataset_section = product.metadata_type.definition['dataset']
+
+        select_fields = []
+        for field_name in field_names:
+            if dataset_fields.get(field_name):
+                select_fields.append(dataset_fields[field_name])
+            else:
+                # try to construct the field
+                if field_name in {'transform', 'extent', 'crs', 'bounds'}:
+                    grid_spatial = dataset_section.get('grid_spatial')
+                    if grid_spatial:
+                        select_fields.append(SimpleDocField(
+                            'grid_spatial', 'grid_spatial', DATASET.c.metadata,
+                            False,
+                            offset=grid_spatial
+                        ))
+                elif custom_offsets and field_name in custom_offsets:
+                    select_fields.append(SimpleDocField(
+                        field_name, field_name, DATASET.c.metadata,
+                        False,
+                        offset=custom_offsets[field_name]
+                    ))
+                elif field_name == 'uris':
+                    select_fields.append(Field('uris', 'uris'))
+
+        return select_fields
+
+    def make_query_expr(self, query, custom_offsets):
+        """
+        Generate query expressions including queries based on custom fields
+        """
+
+        product_queries = list(self._get_product_queries(query))
+        custom_query = dict()
+        if not product_queries:
+            # The key, values in query that are un-machable with info
+            # in metadata types and product definitions, perhaps there are custom
+            # fields, will need to handle custom fields separately
+
+            canonical_query = query.copy()
+            custom_query = {key: canonical_query.pop(key) for key in custom_offsets
+                            if key in canonical_query}
+            product_queries = list(self._get_product_queries(canonical_query))
+
+            if not product_queries:
+                raise ValueError('No products match search terms: %r' % query)
+
+        for q, product in product_queries:
+            dataset_fields = product.metadata_type.dataset_fields
+            query_exprs = tuple(fields.to_expressions(dataset_fields.get, **q))
+            custom_query_exprs = tuple(self.get_custom_query_expressions(custom_query, custom_offsets))
+
+            yield product, query_exprs + custom_query_exprs
+
+    def get_custom_query_expressions(self, custom_query, custom_offsets):
+        """
+        Generate query expressions for custom fields. it is assumed that custom fields are to be found
+        in metadata doc and their offsets are provided. custom_query is a dict of key fields involving
+        custom fields.
+        """
+
+        custom_exprs = []
+        for key in custom_query:
+            # for now we assume all custom query fields are SimpleDocFields
+            custom_field = SimpleDocField(
+                custom_query[key], custom_query[key], DATASET.c.metadata,
+                False, offset=custom_offsets[key]
+            )
+            custom_exprs.append(fields.as_expression(custom_field, custom_query[key]))
+
+        return custom_exprs

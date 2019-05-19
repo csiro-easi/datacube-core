@@ -52,6 +52,37 @@ def get_raster_info(ds, measurements=None):
             for n in measurements}
 
 
+def native_geobox(ds, measurements=None, basis=None):
+    """Compute native GeoBox for a set of bands for a given dataset
+
+    :param ds: Dataset
+    :param measurements: List of band names to consider
+    :param basis: Name of the band to use for computing reference frame, other
+    bands might be reprojected if they use different pixel grid
+
+    :return: GeoBox describing native storage coordinates.
+    """
+    gs = ds.type.grid_spec
+    if gs is not None:
+        # Dataset is from ingested product, figure out GeoBox of the tile this dataset covers
+        bb = [gbox for _, gbox in gs.tiles(ds.bounds)]
+        if len(bb) != 1:
+            # Ingested product but dataset overlaps several/none tiles -- no good
+            raise ValueError('Broken GridSpec detected')
+        return bb[0]
+
+    if basis is not None:
+        return get_raster_info(ds, [basis])[basis].geobox
+
+    ii = get_raster_info(ds, measurements)
+    gboxes = [info.geobox for info in ii.values()]
+    geobox = gboxes[0]
+    consistent = all(geobox == gbox for gbox in gboxes)
+    if not consistent:
+        raise ValueError('Not all bands share the same pixel grid')
+    return geobox
+
+
 def native_load(ds, measurements=None, basis=None, **kw):
     """Load single dataset in native resolution.
 
@@ -65,18 +96,12 @@ def native_load(ds, measurements=None, basis=None, **kw):
     :return: Xarray dataset
     """
     from datacube import Datacube
-
-    ii = get_raster_info(ds, measurements)
-    if basis is not None:
-        geobox = ii[basis].geobox
+    geobox = native_geobox(ds, measurements, basis)  # early exit via exception if no compatible grid exists
+    if measurements is not None:
+        mm = [ds.type.measurements[n] for n in measurements]
     else:
-        gboxes = [info.geobox for info in ii.values()]
-        geobox = gboxes[0]
-        consistent = all(geobox == gbox for gbox in gboxes)
-        if not consistent:
-            raise ValueError('Not all bands share the same pixel grid')
+        mm = ds.type.measurements
 
-    mm = [ds.type.measurements[n] for n in ii.keys()]
     return Datacube.load_data(Datacube.group_datasets([ds], 'time'),
                               geobox,
                               measurements=mm, **kw)

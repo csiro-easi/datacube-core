@@ -291,8 +291,28 @@ def test_missing_file_handling():
             rio_slurp('no-such-file.tiff')
 
 
+def test_native_geobox_ingested():
+    from datacube.testutils.io import native_geobox
+    from datacube.testutils.geom import AlbersGS
+
+    gbox = AlbersGS.tile_geobox((15, -40))
+    ds = mk_sample_dataset([dict(name='a')],
+                           geobox=gbox,
+                           product_opts=dict(with_grid_spec=True))
+
+    assert native_geobox(ds) == gbox
+
+    # check that dataset covering several tiles is detected as invalid
+    ds = mk_sample_dataset([dict(name='a')],
+                           geobox=gbox.buffered(10, 10),
+                           product_opts=dict(with_grid_spec=True))
+
+    with pytest.raises(ValueError):
+        native_geobox(ds)
+
+
 def test_native_load(tmpdir):
-    from datacube.testutils.io import native_load
+    from datacube.testutils.io import native_load, native_geobox
 
     tmpdir = Path(str(tmpdir))
     spatial = dict(resolution=(15, -15),
@@ -326,13 +346,19 @@ def test_native_load(tmpdir):
     with pytest.raises(ValueError):
         xx = native_load(ds)
 
+    # cc is different size from aa,bb
+    with pytest.raises(ValueError):
+        xx = native_geobox(ds)
+
     # aa and bb are the same
+    assert native_geobox(ds, ['aa', 'bb']) == gbox
     xx = native_load(ds, ['aa', 'bb'])
     assert xx.geobox == gbox
     np.testing.assert_array_equal(aa, xx.isel(time=0).aa.values)
     np.testing.assert_array_equal(aa, xx.isel(time=0).bb.values)
 
     # cc will be reprojected
+    assert native_geobox(ds, basis='aa') == gbox
     xx = native_load(ds, basis='aa')
     assert xx.geobox == gbox
     np.testing.assert_array_equal(aa, xx.isel(time=0).aa.values)
