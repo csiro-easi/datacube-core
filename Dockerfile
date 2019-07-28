@@ -11,11 +11,10 @@ RUN add-apt-repository ppa:nextgis/ppa
 
 # And now install apt dependencies, including a few of the heavy Python projects
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core requirements from travis.yml
     gdal-bin gdal-data libgdal-dev libgdal20 libudunits2-0 \
-    # Extra python components, to speed things up
+    libudunits2-dev \
+    proj-bin libproj-dev \
     python3 python3-setuptools python3-dev \
-    python3-numpy python3-netcdf4 python3-gdal \
     # Need pip to install more python packages later.
     # The libdpkg-perl is needed to build pyproj
     python3-pip python3-wheel cython3 libdpkg-perl \
@@ -24,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # G++ because GDAL decided it needed compiling
     g++ \
     # numpy requires headers for cf_units
-    libudunits2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Get the code, and put it in /code
@@ -43,8 +41,7 @@ RUN pip3 install --upgrade pip \
 # Install psycopg2 as a special case to quiet the warning message 
 # Make sure this version is the same as in the requirements-test.txt file
 RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7 \
-    && rm -rf $HOME/.cache/pip
-
+    && pip3 install --no-binary shapely cartopy matplotlib scipy
 # Use the setup.py file to identify dependencies
 RUN pip3 install -r requirements-test.txt \
     && rm -rf $HOME/.cache/pip
