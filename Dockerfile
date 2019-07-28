@@ -11,17 +11,15 @@ RUN add-apt-repository ppa:nextgis/ppa
 
 # And now install apt dependencies, including a few of the heavy Python projects
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gdal-bin gdal-data libgdal-dev libgdal20 libudunits2-0 \
-    libudunits2-dev \
+    gdal-bin gdal-data libgdal20 libgdal-dev \
+    libudunits2-0 libudunits2-dev \
     proj-bin libproj-dev \
     python3 python3-setuptools python3-dev \
     # Need pip to install more python packages later.
     # The libdpkg-perl is needed to build pyproj
     python3-pip python3-wheel cython3 libdpkg-perl \
     # Git to work out the ODC version number
-    git \
-    # G++ because GDAL decided it needed compiling
-    g++ \
+    git g++ \
     # numpy requires headers for cf_units
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,8 +38,7 @@ RUN pip3 install --upgrade pip \
 
 # Install psycopg2 as a special case to quiet the warning message 
 # Make sure this version is the same as in the requirements-test.txt file
-RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7 \
-    && pip3 install --no-binary shapely cartopy matplotlib scipy
+RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7
 # Use the setup.py file to identify dependencies
 RUN pip3 install -r requirements-test.txt \
     && rm -rf $HOME/.cache/pip
