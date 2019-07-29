@@ -1,4 +1,5 @@
-FROM ubuntu:18.04
+#FROM ubuntu:18.04
+FROM csiroeasi/geo-builder:latest
 # This Dockerfile should follow the Travis configuration process
 # available here: https://github.com/opendatacube/datacube-core/blob/develop/.travis.yml
 
@@ -7,13 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-RUN add-apt-repository ppa:nextgis/ppa
+#RUN add-apt-repository ppa:nextgis/ppa
 
 # And now install apt dependencies, including a few of the heavy Python projects
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gdal-bin gdal-data libgdal20 libgdal-dev \
-    libudunits2-0 libudunits2-dev \
-    proj-bin libproj-dev \
+#    gdal-bin gdal-data libgdal20 libgdal-dev \
+#    libudunits2-0 libudunits2-dev \
+#    proj-bin libproj-dev \
     python3 python3-setuptools python3-dev \
     # Need pip to install more python packages later.
     # The libdpkg-perl is needed to build pyproj
@@ -38,10 +39,10 @@ RUN pip3 install --upgrade pip \
 
 # Install psycopg2 as a special case to quiet the warning message 
 # Make sure this version is the same as in the requirements-test.txt file
-RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7
+#RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7
 # Use the setup.py file to identify dependencies
-RUN pip3 install -r requirements-test.txt \
-    && rm -rf $HOME/.cache/pip
+#RUN pip3 install -r requirements-test.txt \
+#    && rm -rf $HOME/.cache/pip
 
 # Install ODC
 RUN python3 setup.py install
