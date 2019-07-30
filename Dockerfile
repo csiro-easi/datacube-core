@@ -1,28 +1,5 @@
 #FROM ubuntu:18.04
-FROM csiroeasi/geo-builder:latest
-# This Dockerfile should follow the Travis configuration process
-# available here: https://github.com/opendatacube/datacube-core/blob/develop/.travis.yml
-
-# First add the NextGIS repo
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-#RUN add-apt-repository ppa:nextgis/ppa
-
-# And now install apt dependencies, including a few of the heavy Python projects
-RUN apt-get update && apt-get install -y --no-install-recommends \
-#    gdal-bin gdal-data libgdal20 libgdal-dev \
-#    libudunits2-0 libudunits2-dev \
-#    proj-bin libproj-dev \
-    python3 python3-setuptools python3-dev \
-    # Need pip to install more python packages later.
-    # The libdpkg-perl is needed to build pyproj
-    python3-pip python3-wheel cython3 libdpkg-perl \
-    # Git to work out the ODC version number
-    git g++ \
-    # numpy requires headers for cf_units
-    && rm -rf /var/lib/apt/lists/*
+FROM csiroeasi/geo-python-base:latest
 
 # Get the code, and put it in /code
 ENV APPDIR=/tmp/code
@@ -33,16 +10,13 @@ WORKDIR $APPDIR
 # Set the locale, this is required for some of the Python packages
 ENV LC_ALL C.UTF-8
 
-# Ensure pip is up to date
-RUN pip3 install --upgrade pip \
-    && rm -rf $HOME/.cache/pip
-
-# Install psycopg2 as a special case to quiet the warning message 
-# Make sure this version is the same as in the requirements-test.txt file
-#RUN pip3 install --no-cache --no-binary :all: psycopg2==2.7.7
-# Use the setup.py file to identify dependencies
-#RUN pip3 install -r requirements-test.txt \
-#    && rm -rf $HOME/.cache/pip
+# Install additional libraries useful or required for the python libraries used by ODC
+# This mostly impacts python libraries that use additional c libraries during build to improve performance
+# (e.g. pyrsistent, pyyaml)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libyaml-dev libyaml-0-2 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install ODC
 RUN python3 setup.py install
