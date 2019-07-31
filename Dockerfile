@@ -1,5 +1,4 @@
-#FROM ubuntu:18.04
-FROM csiroeasi/geo-python-base:latest
+FROM csiroeasi/geo-python-base:proj5
 
 # Get the code, and put it in /code
 ENV APPDIR=/tmp/code
