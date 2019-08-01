@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install ODC
-RUN python3 setup.py install
+#RUN python3 setup.py install
+RUN pip install '.[celery,s3]'
 
 # Move docs and utils somewhere else, and remove the temp folder
 RUN mkdir -p /opt/odc \
