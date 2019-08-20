@@ -136,10 +136,20 @@ class S3DataSource(DataSource):
         if s3_dataset.regular_dims[0]:  # If time is regular
             return int((sec_since_1970 - s3_dataset.regular_index[0]) / s3_dataset.regular_index[2])
         else:
-            epsilon = DriverUtils.epsilon('time')
+            results = []
             for idx, timestamp in enumerate(s3_dataset.irregular_index[0]):
-                if abs(sec_since_1970 - timestamp / 1000000000.0) < epsilon:
-                    return idx
+                delta = abs(sec_since_1970 - timestamp / 1000000000.0)
+                # if delta < DriverUtils.epsilon('time'):  # Sanity check
+                results.append((idx, delta,))
+
+            if not results:
+                return 1
+
+            # sort by time
+            results.sort(key=lambda x: x[1])
+
+            # return closest match
+            return results[0][0]
         raise ValueError('Cannot find band number for centre time %s' % time)
 
     def get_transform(self, shape):
